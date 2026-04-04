@@ -238,7 +238,7 @@ watch(
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
-  max-width: 480px;
+  max-width: 720px;
   width: 100%;
 }
 
