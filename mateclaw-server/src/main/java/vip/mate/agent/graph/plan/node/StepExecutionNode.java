@@ -1,0 +1,458 @@
+package vip.mate.agent.graph.plan.node;
+
+import com.alibaba.cloud.ai.graph.OverAllState;
+import com.alibaba.cloud.ai.graph.action.NodeAction;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.SystemMessage;
+import org.springframework.ai.chat.messages.ToolResponseMessage;
+import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.prompt.ChatOptions;
+import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.model.tool.ToolCallingChatOptions;
+import org.springframework.ai.openai.OpenAiChatOptions;
+import org.springframework.util.StringUtils;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import vip.mate.agent.AgentToolSet;
+import vip.mate.agent.GraphEventPublisher;
+import vip.mate.agent.graph.NodeStreamingChatHelper;
+import vip.mate.agent.graph.plan.state.PlanStateAccessor;
+import vip.mate.agent.graph.plan.state.PlanStateKeys;
+import vip.mate.agent.graph.state.MateClawStateKeys;
+import vip.mate.agent.context.ConversationWindowManager;
+import vip.mate.agent.graph.executor.ToolExecutionExecutor;
+import vip.mate.channel.web.ChatStreamTracker;
+import vip.mate.planning.service.PlanningService;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * 步骤执行节点
+ * <p>
+ * 执行当前步骤，使用显式工具执行循环（internalToolExecutionEnabled=false）。
+ * 单步最大工具调用次数限制为 5 次，防止无限循环。
+ * <p>
+ * 支持 NEEDS_APPROVAL 审批流程：对需要审批的工具调用创建 pending，
+ * 发出 SSE 事件后立即返回审批提示（非阻塞）。审批通过后通过 replay 重新执行。
+ *
+ * @author MateClaw Team
+ */
+@Slf4j
+public class StepExecutionNode implements NodeAction {
+
+    private final ChatModel chatModel;
+    private final AgentToolSet toolSet;
+    private final ToolExecutionExecutor executor;
+    private final PlanningService planningService;
+    private final ChatStreamTracker streamTracker;
+    private final ConversationWindowManager conversationWindowManager;
+    private final String reasoningEffort;
+    private final NodeStreamingChatHelper streamingHelper;
+
+    private static final int MAX_TOOL_CALLS_PER_STEP = 5;
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    public StepExecutionNode(ChatModel chatModel, AgentToolSet toolSet,
+                             ToolExecutionExecutor executor,
+                             PlanningService planningService,
+                             ChatStreamTracker streamTracker,
+                             String reasoningEffort, NodeStreamingChatHelper streamingHelper,
+                             ConversationWindowManager conversationWindowManager) {
+        this.chatModel = chatModel;
+        this.toolSet = toolSet;
+        this.executor = executor;
+        this.planningService = planningService;
+        this.streamTracker = streamTracker;
+        this.conversationWindowManager = conversationWindowManager;
+        this.reasoningEffort = reasoningEffort;
+        this.streamingHelper = streamingHelper;
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> apply(OverAllState state) throws Exception {
+        PlanStateAccessor accessor = new PlanStateAccessor(state);
+        int stepIndex = accessor.currentStepIndex();
+        List<String> steps = accessor.planSteps();
+        Long planId = accessor.planId();
+        String systemPrompt = accessor.systemPrompt();
+
+        String conversationId = state.value(MateClawStateKeys.CONVERSATION_ID, "");
+        String agentId = state.value(MateClawStateKeys.AGENT_ID, "");
+
+        if (stepIndex >= steps.size()) {
+            log.warn("[StepExecution] stepIndex {} >= steps.size() {}, skipping", stepIndex, steps.size());
+            return PlanStateAccessor.output()
+                    .currentStepResult("步骤索引越界")
+                    .completedResults(formatStepResult(stepIndex, "步骤索引越界"))
+                    .currentStepIndex(stepIndex + 1)
+                    .build();
+        }
+
+        String step = steps.get(stepIndex);
+        log.info("[StepExecution] Executing step {}/{}: {}", stepIndex + 1, steps.size(), step);
+
+        List<GraphEventPublisher.GraphEvent> events = new ArrayList<>();
+        events.add(GraphEventPublisher.stepStarted(stepIndex, step));
+        events.add(GraphEventPublisher.phase("executing", Map.of("stepIndex", stepIndex, "stepTitle", step)));
+
+        planningService.updateSubPlanStatus(planId, stepIndex, "running");
+
+        // 构建消息列表
+        List<Message> messages = buildStepMessages(accessor, step, systemPrompt);
+
+        // 显式工具执行循环
+        String finalResult = null;
+        String stepThinking = "";
+        int toolCallCount = 0;
+        boolean approvalTriggered = false;
+        String approvalToolName = null;
+        int stepPromptTokens = 0;
+        int stepCompletionTokens = 0;
+
+        try {
+            while (toolCallCount < MAX_TOOL_CALLS_PER_STEP) {
+                ChatOptions options;
+                if (StringUtils.hasText(reasoningEffort)) {
+                    OpenAiChatOptions oaiOpts = OpenAiChatOptions.builder()
+                            .toolCallbacks(toolSet.callbacks())
+                            .reasoningEffort(reasoningEffort)
+                            .build();
+                    oaiOpts.setInternalToolExecutionEnabled(false);
+                    options = oaiOpts;
+                } else {
+                    options = ToolCallingChatOptions.builder()
+                            .toolCallbacks(toolSet.callbacks())
+                            .internalToolExecutionEnabled(false)
+                            .build();
+                }
+
+                NodeStreamingChatHelper.StreamResult result = streamingHelper.streamCall(
+                        chatModel, new Prompt(messages, options), conversationId,
+                        "step_execution[" + stepIndex + "]");
+
+                // PTL 处理：压缩后重试
+                if (result.isPromptTooLong() && conversationWindowManager != null) {
+                    log.warn("[StepExecution] Prompt too long at step {}, attempting compaction", stepIndex);
+                    List<Message> compactedMessages = conversationWindowManager.compactForRetry(
+                            messages.subList(1, messages.size()));
+                    if (compactedMessages != null) {
+                        List<Message> retryMessages = new ArrayList<>();
+                        retryMessages.add(messages.get(0));
+                        retryMessages.addAll(compactedMessages);
+                        result = streamingHelper.streamCall(
+                                chatModel, new Prompt(retryMessages, options), conversationId,
+                                "step_execution_compact_retry[" + stepIndex + "]");
+                    }
+                }
+
+                stepPromptTokens += result.promptTokens();
+                stepCompletionTokens += result.completionTokens();
+
+                if (!result.thinking().isEmpty()) {
+                    stepThinking = result.thinking();
+                }
+
+                messages.add(result.assistantMessage());
+
+                if (!result.hasToolCalls()) {
+                    finalResult = result.text();
+                    break;
+                }
+
+                // 手动执行 tool calls
+                List<ToolResponseMessage.ToolResponse> toolResponses = new ArrayList<>();
+                List<AssistantMessage.ToolCall> allToolCalls = result.toolCalls();
+
+                // 从 state 读取预批准的工具调用（replay 注入）
+                String preApprovedPayload = state.value(MateClawStateKeys.PRE_APPROVED_TOOL_CALL, "");
+
+                if (!preApprovedPayload.isEmpty()) {
+                    // Replay 路径：处理预批准工具
+                    for (AssistantMessage.ToolCall toolCall : allToolCalls) {
+                        if (isPreApprovedToolCall(toolCall.name(), preApprovedPayload)) {
+                            String storedArguments = extractArgumentsFromPayload(preApprovedPayload);
+                            events.add(GraphEventPublisher.toolStart(toolCall.name(), toolCall.arguments()));
+                            ToolResponseMessage.ToolResponse response = executor.executePreApproved(
+                                    toolCall, storedArguments, events);
+                            toolResponses.add(response);
+                            preApprovedPayload = ""; // 只消费一次
+                        } else {
+                            // 非预批准工具走正常执行器
+                            ToolExecutionExecutor.ToolExecutionResult execResult = executor.execute(
+                                    List.of(toolCall), conversationId, agentId, false);
+                            toolResponses.addAll(execResult.responses());
+                            events.addAll(execResult.events());
+                            if (execResult.awaitingApproval()) {
+                                approvalTriggered = true;
+                                approvalToolName = toolCall.name();
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    // 正常路径：委托 ToolExecutionExecutor（支持并发执行 + 审批 barrier）
+                    ToolExecutionExecutor.ToolExecutionResult execResult = executor.execute(
+                            allToolCalls, conversationId, agentId, false);
+                    toolResponses.addAll(execResult.responses());
+                    events.addAll(execResult.events());
+                    if (execResult.awaitingApproval()) {
+                        approvalTriggered = true;
+                        approvalToolName = execResult.barrierToolName() != null
+                                ? execResult.barrierToolName() : "unknown";
+                    }
+                }
+
+                // 将工具响应追加到消息
+                ToolResponseMessage toolResponseMessage = ToolResponseMessage.builder()
+                        .responses(toolResponses)
+                        .build();
+                messages.add(toolResponseMessage);
+                toolCallCount++;
+
+                // 如果审批触发，退出 while 循环
+                if (approvalTriggered) {
+                    break;
+                }
+            }
+
+            // 处理审批暂停
+            if (approvalTriggered) {
+                planningService.updateSubPlanStatus(planId, stepIndex, "awaiting_approval");
+                String awaitingResult = "[APPROVAL_PENDING] " + approvalToolName + " awaiting user decision";
+                return PlanStateAccessor.output()
+                        .currentStepResult(awaitingResult)
+                        .currentStepIndex(stepIndex)  // 不递增！下次重放从同一步开始
+                        .currentPhase("awaiting_approval")
+                        .contentStreamed(true)
+                        .thinkingStreamed(!stepThinking.isEmpty())
+                        .put(MateClawStateKeys.PROMPT_TOKENS, state.value(MateClawStateKeys.PROMPT_TOKENS, 0) + stepPromptTokens)
+                        .put(MateClawStateKeys.COMPLETION_TOKENS, state.value(MateClawStateKeys.COMPLETION_TOKENS, 0) + stepCompletionTokens)
+                        .events(events)
+                        .build();
+            }
+
+            if (finalResult == null) {
+                finalResult = "步骤执行超过最大工具调用次数限制（" + MAX_TOOL_CALLS_PER_STEP + "次）";
+                log.warn("[StepExecution] Step {} exceeded max tool call limit", stepIndex);
+            }
+
+        } catch (Exception e) {
+            log.error("[StepExecution] Step {} execution failed: {}", stepIndex, e.getMessage(), e);
+            String shortError = summarizeError(e);
+            planningService.updateSubPlanFailure(planId, stepIndex, shortError);
+            planningService.markPlanFailed(planId, "步骤" + (stepIndex + 1) + " 执行失败：" + shortError);
+            events.add(GraphEventPublisher.stepCompleted(stepIndex, shortError));
+            return PlanStateAccessor.output()
+                    .currentStepResult(shortError)
+                    .currentPhase("plan_aborted")
+                    .contentStreamed(false)
+                    .put(MateClawStateKeys.PROMPT_TOKENS, state.value(MateClawStateKeys.PROMPT_TOKENS, 0) + stepPromptTokens)
+                    .put(MateClawStateKeys.COMPLETION_TOKENS, state.value(MateClawStateKeys.COMPLETION_TOKENS, 0) + stepCompletionTokens)
+                    .events(events)
+                    .build();
+        }
+
+        planningService.updateSubPlanResult(planId, stepIndex, finalResult);
+        events.add(GraphEventPublisher.stepCompleted(stepIndex, finalResult));
+
+        log.info("[StepExecution] Step {}/{} completed: {}",
+                stepIndex + 1, steps.size(),
+                finalResult.length() > 100 ? finalResult.substring(0, 100) + "..." : finalResult);
+
+        // 更新 working context：将最新完成的步骤结果纳入摘要
+        List<String> allCompleted = new ArrayList<>(accessor.completedResults());
+        allCompleted.add(formatStepResult(stepIndex, finalResult));
+        String updatedWorkingContext = rebuildWorkingContext(accessor, allCompleted);
+
+        return PlanStateAccessor.output()
+                .currentStepResult(finalResult)
+                .completedResults(formatStepResult(stepIndex, finalResult))
+                .currentStepIndex(stepIndex + 1)
+                .currentStepThinking(stepThinking)
+                .workingContext(updatedWorkingContext)
+                .currentPhase("step_completed")
+                .contentStreamed(true)
+                .thinkingStreamed(!stepThinking.isEmpty())
+                .put(MateClawStateKeys.PROMPT_TOKENS, state.value(MateClawStateKeys.PROMPT_TOKENS, 0) + stepPromptTokens)
+                .put(MateClawStateKeys.COMPLETION_TOKENS, state.value(MateClawStateKeys.COMPLETION_TOKENS, 0) + stepCompletionTokens)
+                .events(events)
+                .build();
+    }
+
+    private List<Message> buildStepMessages(PlanStateAccessor accessor, String step, String systemPrompt) {
+        List<Message> messages = new ArrayList<>();
+
+        // Layer 1: System prompt（增强指令）
+        String enhancedSystemPrompt = systemPrompt + """
+
+                你是任务执行器，只负责执行"当前步骤"。
+
+                硬性规则：
+                1. 不要先解释你要做什么，直接行动。
+                2. 如果需要工具，直接调用工具，不要先用自然语言描述。
+                3. 如果某个工具进入审批等待，立刻停止，不要改写命令重试，不要继续调用其他工具。
+                4. 默认不要额外读取 MEMORY.md、PROFILE.md 或 memory/ 每日日记；但如果当前步骤明显依赖历史偏好、既有决策、长期约束或持续上下文，可以做一次必要的记忆读取。
+                5. 不要输出"我来先看一下""现在我来..."之类的过程话术。
+                6. 当前步骤完成后只返回这一步的结果，不要总结整个任务。
+                7. 如果前一步已经有结果，默认信任，不要重复验证，除非当前步骤必须依赖再次确认。
+                8. 每一步最多做一个必要的检查和一个必要的执行，不要无意义循环。
+                """;
+        messages.add(new SystemMessage(enhancedSystemPrompt));
+
+        // Layer 2: Working context（对话历史 + 步骤结果的受控长度摘要）
+        String workingContext = accessor.workingContext();
+        if (!workingContext.isEmpty()) {
+            messages.add(new UserMessage(
+                    "以下是此前对话上下文和已完成工作的摘要，请参考但不必重复验证：\n\n"
+                            + workingContext));
+        }
+
+        // Layer 3: Plan context + current step instruction
+        List<String> steps = accessor.planSteps();
+        int currentIndex = accessor.currentStepIndex();
+        List<String> completedResults = accessor.completedResults();
+
+        StringBuilder context = new StringBuilder();
+        context.append("总目标：").append(accessor.goal()).append("\n\n");
+
+        // 展示计划全貌（步骤标题列表），让执行器知道自己在整个流程中的位置
+        context.append("执行计划（共 ").append(steps.size()).append(" 步）：\n");
+        for (int i = 0; i < steps.size(); i++) {
+            String status = i < currentIndex ? "✓" : (i == currentIndex ? "→" : "○");
+            context.append("  ").append(status).append(" 步骤").append(i + 1).append("：").append(steps.get(i)).append("\n");
+        }
+        context.append("\n");
+
+        // Layer 4: 最近完成步骤结果（精简后，避免与 working context 重复太多）
+        if (!completedResults.isEmpty()) {
+            context.append("最近完成的步骤结果：\n");
+            // 只保留最近 3 条，每条截断至 500 字
+            List<String> recentResults = completedResults.size() > 3
+                    ? completedResults.subList(completedResults.size() - 3, completedResults.size())
+                    : completedResults;
+            for (String result : recentResults) {
+                String summary = result.length() > 500 ? result.substring(0, 500) + "…" : result;
+                context.append(summary).append("\n");
+            }
+            context.append("\n");
+        }
+
+        // Layer 5: Current step instruction
+        context.append("当前需要执行的步骤（第 ").append(currentIndex + 1).append(" 步）：").append(step);
+        context.append("\n\n请执行当前步骤并给出结果。");
+
+        messages.add(new UserMessage(context.toString()));
+        return messages;
+    }
+
+    private String formatStepResult(int stepIndex, String result) {
+        return String.format("步骤%d结果：%s", stepIndex + 1, result);
+    }
+
+    /**
+     * 判断当前工具调用是否与预批准 payload 中的工具名匹配。
+     * payload 格式: {"name":"toolName","arguments":"...","status":"running"}
+     */
+    private boolean isPreApprovedToolCall(String toolName, String preApprovedPayload) {
+        if (preApprovedPayload == null || preApprovedPayload.isEmpty()) return false;
+        try {
+            JsonNode node = MAPPER.readTree(preApprovedPayload);
+            String approvedName = node.path("name").asText("");
+            return toolName.equals(approvedName);
+        } catch (Exception e) {
+            log.warn("[StepExecution] Failed to parse pre-approved payload: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * 将异常转换为简短的错误摘要，避免将完整异常体（尤其是 429 JSON）写入后续 prompt。
+     * <ul>
+     *   <li>限流错误（429 / rate_limit / overloaded）→ 固定简短提示</li>
+     *   <li>其他错误 → 取前 200 字符</li>
+     * </ul>
+     */
+    private static String summarizeError(Exception e) {
+        String msg = e.getMessage();
+        if (msg == null) {
+            msg = e.getClass().getSimpleName();
+        }
+        String lower = msg.toLowerCase();
+        if (lower.contains("429") || lower.contains("rate limit") || lower.contains("rate_limit")
+                || lower.contains("too many requests") || lower.contains("overloaded")) {
+            return "LLM 限流（rate limit），请稍后重试";
+        }
+        return msg.length() > 200 ? msg.substring(0, 200) + "…" : msg;
+    }
+
+    /**
+     * 从预批准 payload 中提取完整的 arguments 字符串。
+     * 审批创建时存储的是原始完整参数，优先使用，避免 LLM 流式截断导致 JSON 残缺。
+     *
+     * @return arguments 字符串，若解析失败返回 null（调用方回退到 LLM 流式参数）
+     */
+    private String extractArgumentsFromPayload(String preApprovedPayload) {
+        if (preApprovedPayload == null || preApprovedPayload.isEmpty()) return null;
+        try {
+            JsonNode node = MAPPER.readTree(preApprovedPayload);
+            JsonNode argsNode = node.path("arguments");
+            if (argsNode.isMissingNode() || argsNode.isNull()) return null;
+            return argsNode.asText();
+        } catch (Exception e) {
+            log.warn("[StepExecution] Failed to extract arguments from pre-approved payload: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 根据当前 accessor 中的会话历史消息和更新后的已完成步骤结果，
+     * 重建 working context。复用与 StateGraphPlanExecuteAgent.buildWorkingContext 相同的逻辑。
+     */
+    private static String rebuildWorkingContext(PlanStateAccessor accessor, List<String> allCompletedResults) {
+        List<Message> messages = accessor.messages();
+        // messages 中最后一条通常是当前 UserMessage（goal），前面的是历史
+        List<Message> history = messages.size() > 1 ? messages.subList(0, messages.size() - 1) : List.of();
+
+        StringBuilder sb = new StringBuilder();
+
+        // 历史消息摘要
+        if (!history.isEmpty()) {
+            sb.append("=== 对话历史摘要 ===\n");
+            int startIdx = Math.max(0, history.size() - 10);
+            for (int i = startIdx; i < history.size(); i++) {
+                Message msg = history.get(i);
+                String role = msg.getMessageType().name().toLowerCase();
+                String content = msg.getText();
+                if (content != null && !content.isEmpty()) {
+                    String truncated = content.length() > 500 ? content.substring(0, 500) + "…" : content;
+                    sb.append("[").append(role).append("] ").append(truncated).append("\n");
+                }
+            }
+            sb.append("\n");
+        }
+
+        // 已完成步骤结果摘要
+        if (!allCompletedResults.isEmpty()) {
+            sb.append("=== 已完成步骤结果 ===\n");
+            int startIdx = Math.max(0, allCompletedResults.size() - 5);
+            for (int i = startIdx; i < allCompletedResults.size(); i++) {
+                String result = allCompletedResults.get(i);
+                String truncated = result.length() > 800 ? result.substring(0, 800) + "…" : result;
+                sb.append(truncated).append("\n");
+            }
+        }
+
+        // 总体截断
+        String context = sb.toString();
+        if (context.length() > 6000) {
+            context = context.substring(0, 6000) + "\n…（上下文已截断）";
+        }
+        return context;
+    }
+}

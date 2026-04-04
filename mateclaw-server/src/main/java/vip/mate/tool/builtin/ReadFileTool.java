@@ -1,0 +1,200 @@
+package vip.mate.tool.builtin;
+
+import cn.hutool.json.JSONObject;
+import cn.hutool.json.JSONUtil;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
+import org.springframework.stereotype.Component;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+
+/**
+ * 内置工具：读取文件内容
+ * <p>
+ * 支持按行范围读取，自动截断超大输出。
+ * 支持 line-based range、smart truncation、continuation hints。
+ * <p>
+ * 重要限制：此工具仅支持文本文件，不处理 PDF/Office 文档。
+ * 对于 .pdf/.docx/.xlsx/.pptx 等文档，请使用 extract_document_text 工具。
+ *
+ * @author MateClaw Team
+ */
+@Slf4j
+@Component
+public class ReadFileTool {
+
+    private static final int DEFAULT_MAX_LINES = 1000;
+    private static final int MAX_OUTPUT_BYTES = 30 * 1024; // 30KB
+
+    /**
+     * 二进制文档扩展名集合 - 这些文件不应使用 read_file 读取
+     */
+    private static final Set<String> DOCUMENT_EXTENSIONS = Set.of(
+            ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+            ".odt", ".ods", ".odp", ".rtf"
+    );
+
+    @Tool(description = """
+            读取指定文件的内容。支持按行范围读取（1-based）。
+            返回包含 filePath、totalLines、readLines、content 的结构化 JSON 结果。
+            如果文件过大，会自动截断并提示继续读取的行号。
+
+            重要限制：
+            - 仅支持文本文件（.txt, .md, .json, .xml, .csv, .log, 源代码等）
+            - 不支持 PDF、Word、Excel、PowerPoint 等 Office 文档
+            - 如需读取 PDF/Word 文档，请使用 extract_document_text 工具
+            """)
+    public String read_file(
+            @ToolParam(description = "文件的绝对路径或相对路径") String filePath,
+            @ToolParam(description = "起始行号（从 1 开始，包含），不传则从第 1 行开始", required = false) Integer startLine,
+            @ToolParam(description = "结束行号（从 1 开始，包含），不传则读到末尾或达到截断上限", required = false) Integer endLine) {
+
+        JSONObject result = new JSONObject();
+        result.set("filePath", filePath);
+
+        try {
+            Path path = Paths.get(filePath).toAbsolutePath().normalize();
+
+            // 文件存在性和类型校验
+            if (!Files.exists(path)) {
+                return errorResult(filePath, "文件不存在: " + path);
+            }
+            if (Files.isDirectory(path)) {
+                return errorResult(filePath, "路径是目录而非文件: " + path);
+            }
+            if (!Files.isReadable(path)) {
+                return errorResult(filePath, "文件不可读: " + path);
+            }
+
+            // 检查是否是二进制文档 - 拒绝直接读取
+            String fileName = path.getFileName().toString().toLowerCase();
+            for (String ext : DOCUMENT_EXTENSIONS) {
+                if (fileName.endsWith(ext)) {
+                    return errorResult(filePath, buildDocumentErrorMessage(fileName, ext));
+                }
+            }
+
+            // 读取所有行
+            List<String> allLines = readLinesUtf8(path);
+            int totalLines = allLines.size();
+            result.set("totalLines", totalLines);
+
+            // 解析行范围
+            int start = (startLine != null && startLine > 0) ? startLine : 1;
+            int end = (endLine != null && endLine > 0) ? endLine : totalLines;
+
+            // 范围校验
+            if (start > totalLines) {
+                return errorResult(filePath, "起始行 " + start + " 超出文件总行数 " + totalLines);
+            }
+            start = Math.max(1, start);
+            end = Math.min(end, totalLines);
+            if (start > end) {
+                return errorResult(filePath, "起始行 " + start + " 大于结束行 " + end);
+            }
+
+            // 提取指定范围的行（转为 0-based）
+            List<String> selectedLines = allLines.subList(start - 1, end);
+
+            // 截断控制
+            StringBuilder sb = new StringBuilder();
+            int linesRead = 0;
+            boolean truncated = false;
+            int maxLines = Math.min(selectedLines.size(), DEFAULT_MAX_LINES);
+
+            for (int i = 0; i < selectedLines.size(); i++) {
+                String line = selectedLines.get(i);
+                int lineNum = start + i;
+
+                String numberedLine = String.format("%6d\t%s\n", lineNum, line);
+                if (sb.length() + numberedLine.length() > MAX_OUTPUT_BYTES || linesRead >= DEFAULT_MAX_LINES) {
+                    truncated = true;
+                    break;
+                }
+                sb.append(numberedLine);
+                linesRead++;
+            }
+
+            result.set("startLine", start);
+            result.set("endLine", start + linesRead - 1);
+            result.set("readLines", linesRead);
+            result.set("content", sb.toString());
+
+            if (truncated) {
+                int nextStart = start + linesRead;
+                result.set("truncated", true);
+                result.set("message", "输出已截断（最多 " + DEFAULT_MAX_LINES + " 行 / " + (MAX_OUTPUT_BYTES / 1024)
+                        + "KB）。使用 startLine=" + nextStart + " 继续读取。");
+            } else {
+                result.set("truncated", false);
+            }
+
+            log.info("[ReadFile] Read {} lines from {} (lines {}-{})", linesRead, path, start, start + linesRead - 1);
+
+        } catch (Exception e) {
+            log.error("[ReadFile] Failed to read file: {}", e.getMessage(), e);
+            return errorResult(filePath, "读取文件异常: " + e.getMessage());
+        }
+
+        return JSONUtil.toJsonPrettyStr(result);
+    }
+
+    /**
+     * 构建文档类型错误消息，引导用户使用正确的工具
+     */
+    private String buildDocumentErrorMessage(String fileName, String ext) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("无法直接读取二进制文档: ").append(fileName).append("\n\n");
+        sb.append("这是 ").append(ext.toUpperCase()).append(" 格式的 Office/PDF 文档，");
+        sb.append("不能作为纯文本读取。\n\n");
+        sb.append("请使用以下工具之一：\n");
+
+        switch (ext) {
+            case ".pdf" -> sb.append("- extract_pdf_text(filePath=\"").append(fileName).append("\")\n");
+            case ".docx", ".doc" -> sb.append("- extract_docx_text(filePath=\"").append(fileName).append("\")\n");
+            default -> sb.append("- extract_document_text(filePath=\"").append(fileName).append("\")\n");
+        }
+        sb.append("- extract_document_text(filePath=\"").append(fileName).append("\") - 通用文档提取\n");
+
+        sb.append("\n或者先检测文件类型：\n");
+        sb.append("- detect_file_type(filePath=\"").append(fileName).append("\")");
+
+        return sb.toString();
+    }
+
+    /**
+     * 以 UTF-8 读取文件全部行，对非 UTF-8 文件做容错处理
+     */
+    private List<String> readLinesUtf8(Path path) throws IOException {
+        try {
+            return Files.readAllLines(path, StandardCharsets.UTF_8);
+        } catch (java.nio.charset.MalformedInputException e) {
+            // 回退：以字节读取再忽略不合法字符
+            log.warn("[ReadFile] Non-UTF8 file, fallback with replacement: {}", path);
+            byte[] bytes = Files.readAllBytes(path);
+            String content = new String(bytes, StandardCharsets.UTF_8);
+            List<String> lines = new ArrayList<>();
+            for (String line : content.split("\n", -1)) {
+                lines.add(line);
+            }
+            return lines;
+        }
+    }
+
+    private String errorResult(String filePath, String message) {
+        JSONObject result = new JSONObject();
+        result.set("filePath", filePath);
+        result.set("error", true);
+        result.set("message", message);
+        return JSONUtil.toJsonPrettyStr(result);
+    }
+}

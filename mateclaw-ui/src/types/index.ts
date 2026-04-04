@@ -1,0 +1,627 @@
+import type { ChatErrorInfo } from './chatError'
+
+// ==================== 通用 ====================
+export interface ApiResult<T = any> {
+  code: number
+  msg: string
+  data: T
+}
+
+// ==================== 用户 ====================
+export interface User {
+  id: string | number
+  username: string
+  nickname: string
+  avatar?: string
+  email?: string
+  role: 'admin' | 'user'
+  enabled: boolean
+  createTime: string
+}
+
+export interface LoginRequest {
+  username: string
+  password: string
+}
+
+export interface LoginResponse {
+  token: string
+  username: string
+  nickname: string
+  role: string
+}
+
+// ==================== Agent ====================
+export interface Agent {
+  id: string | number
+  name: string
+  description?: string
+  agentType: 'react' | 'plan_execute'
+  systemPrompt?: string
+  modelName?: string
+  maxIterations: number
+  enabled: boolean
+  icon?: string
+  tags?: string
+  createTime?: string
+  updateTime?: string
+}
+
+// 兼容旧代码
+export type AgentEntity = Agent
+export type AgentState = 'IDLE' | 'RUNNING' | 'PAUSED' | 'ERROR' | 'COMPLETED'
+
+// ==================== 会话与消息 ====================
+export interface Conversation {
+  id?: string | number
+  conversationId: string
+  title: string
+  agentId: string | number
+  agentName?: string
+  agentIcon?: string
+  username?: string
+  messageCount: number
+  lastMessage?: string
+  status?: 'active' | 'closed'
+  streamStatus?: 'idle' | 'running'
+  source?: string
+  lastActiveTime?: string
+  updateTime?: string
+  createTime?: string
+}
+
+export interface Message {
+  id?: string | number
+  conversationId: string
+  role: 'user' | 'assistant' | 'system' | 'tool'
+  content: string
+  contentParts: MessageContentPart[]
+  thinkingExpanded?: boolean
+  toolName?: string
+  status?: 'generating' | 'completed' | 'stopped' | 'failed' | 'awaiting_approval' | 'interrupted'
+  createTime?: string
+  // Token 统计
+  promptTokens?: number
+  completionTokens?: number
+  // 前端临时字段
+  streaming?: boolean  // 内部动画控制，UI 渲染以 status 为准
+  attachments?: ChatAttachment[]
+  // Agent 事件元数据
+  metadata?: MessageMetadata
+  // 结构化错误信息（status === 'failed' 时可用）
+  errorInfo?: ChatErrorInfo
+}
+
+export interface ChatAttachment {
+  name: string
+  size: number
+  url: string
+  storedName: string
+  path: string
+  contentType?: string
+}
+
+export interface ToolCallMeta {
+  name: string
+  arguments?: string
+  status: 'running' | 'completed' | 'awaiting_approval'
+  result?: string
+  success?: boolean
+  startTime?: number
+}
+
+export interface PlanMeta {
+  planId: string | number
+  steps: string[]
+  currentStep: number
+  stepResults?: { result: string; status: string }[]
+}
+
+export interface PendingApprovalMeta {
+  pendingId: string
+  toolName: string
+  arguments: string
+  reason: string
+  status: 'pending_approval' | 'approved' | 'denied'
+  // 增强字段（Phase 6: 结构化风险信息）
+  findings?: GuardFinding[]
+  maxSeverity?: GuardSeverity
+  summary?: string
+}
+
+export interface MessageMetadata {
+  currentPhase?: string
+  toolCalls?: ToolCallMeta[]
+  plan?: PlanMeta
+  pendingApproval?: PendingApprovalMeta
+  /** 当前正在执行的工具名称 */
+  runningToolName?: string
+  /** 服务端警告列表 */
+  warnings?: string[]
+}
+
+export interface MessageContentPart {
+  type: 'text' | 'thinking' | 'file' | 'tool_call'
+  text?: string
+  fileUrl?: string
+  fileName?: string
+  storedName?: string
+  contentType?: string
+  fileSize?: number
+  path?: string
+  /** 前端流式渲染用：已显示的字符数。undefined 表示全部显示。 */
+  visibleLength?: number
+}
+
+// ==================== 技能 ====================
+export interface Skill {
+  id: string | number
+  name: string
+  description?: string
+  skillType: string
+  icon?: string
+  version?: string
+  author?: string
+  config?: string
+  configJson?: string
+  sourceCode?: string
+  skillContent?: string
+  enabled: boolean
+  builtin?: boolean
+  tags?: string
+  createTime: string
+}
+
+/** 运行时解析状态（来自 /runtime/status） */
+export interface SkillRuntimeStatus {
+  name: string
+  description?: string
+  source: string  // "directory" | "database"
+  configuredSkillDir?: string | null
+  skillDirPath?: string | null
+  runtimeAvailable: boolean
+  resolutionError?: string | null
+  references: Record<string, any>
+  scripts: Record<string, any>
+  enabled: boolean
+  icon?: string
+  // Security scan fields
+  securityBlocked?: boolean
+  securitySeverity?: string | null
+  securitySummary?: string | null
+  securityFindings?: SkillSecurityFinding[]
+  securityWarnings?: string[]
+  // Dependency check fields
+  dependencyReady?: boolean
+  missingDependencies?: string[]
+  dependencySummary?: string | null
+  // Computed label
+  runtimeStatusLabel?: string
+}
+
+/** 安全扫描发现 */
+export interface SkillSecurityFinding {
+  ruleId: string
+  severity: string
+  category: string
+  title: string
+  description?: string
+  filePath?: string
+  lineNumber?: number
+  snippet?: string
+  remediation?: string
+}
+
+// 兼容旧代码
+export type SkillEntity = Skill
+
+// ==================== Skill 安装 ====================
+export interface InstallRequest {
+  bundleUrl: string
+  version?: string
+  enable?: boolean
+  targetName?: string
+  overwrite?: boolean
+}
+
+export interface InstallTask {
+  taskId: string
+  bundleUrl: string
+  status: 'PENDING' | 'INSTALLING' | 'COMPLETED' | 'FAILED' | 'CANCELLED'
+  error?: string
+  result?: InstallResult
+  createdAt: string
+  updatedAt: string
+}
+
+export interface InstallResult {
+  name: string
+  enabled: boolean
+  sourceUrl: string
+  sourceType: string
+}
+
+export interface HubSkillInfo {
+  name: string
+  slug: string
+  description: string
+  author: string
+  version: string
+  icon?: string
+  tags?: string[]
+  downloads?: number
+  bundleUrl: string
+}
+
+// ==================== 工具 ====================
+export interface Tool {
+  id: string | number
+  name: string
+  displayName?: string
+  description?: string
+  beanName?: string
+  toolType: string
+  icon?: string
+  mcpEndpoint?: string
+  paramsSchema?: string
+  enabled: boolean
+  builtin?: boolean
+  createTime: string
+}
+
+// ==================== 渠道 ====================
+export interface Channel {
+  id: string | number
+  name: string
+  channelType: string
+  agentId?: string | number
+  botPrefix?: string
+  configJson?: string
+  enabled: boolean
+  description?: string
+  // 前端扩展字段
+  icon?: string
+  color?: string
+  createTime?: string
+}
+
+/** 渠道配置字段定义 */
+export interface ChannelFieldDef {
+  key: string
+  label: string
+  placeholder: string
+  required?: boolean
+  sensitive?: boolean
+  tooltip?: string
+  type: 'text' | 'password' | 'select' | 'switch' | 'number'
+  options?: { label: string; value: string }[]
+  defaultValue?: string | boolean | number
+  /** 条件显示：仅当指定字段等于指定值时才显示此字段 */
+  showIf?: { field: string; value: string | boolean | number }
+}
+
+/** 各渠道的表单字段定义 */
+export const CHANNEL_FIELD_DEFS: Record<string, ChannelFieldDef[]> = {
+  dingtalk: [
+    { key: 'client_id', label: 'AppKey', placeholder: 'dingxxxxxxxx', required: true, type: 'text', tooltip: '钉钉开放平台应用的 AppKey（Client ID）' },
+    { key: 'client_secret', label: 'AppSecret', placeholder: 'xxxxxxxxxxxxxxxx', required: true, sensitive: true, type: 'password', tooltip: '钉钉开放平台应用的 AppSecret' },
+    { key: 'connection_mode', label: '接入模式', placeholder: '', type: 'select', defaultValue: 'stream', tooltip: 'Stream 长连接无需公网 IP（推荐）；Webhook 需要公网回调地址', options: [{ label: 'Stream（长连接，推荐）', value: 'stream' }, { label: 'Webhook（HTTP 回调）', value: 'webhook' }] },
+    { key: 'message_type', label: '消息格式', placeholder: '', type: 'select', defaultValue: 'markdown', tooltip: 'markdown: 普通消息；card: AI 流式卡片（需配置模板 ID）', options: [{ label: 'Markdown', value: 'markdown' }, { label: 'AI Card（流式卡片）', value: 'card' }] },
+    { key: 'card_template_id', label: '卡片模板 ID', placeholder: 'dt_card_1234', required: true, type: 'text', tooltip: '钉钉 AI Card 模板 ID', showIf: { field: 'message_type', value: 'card' } },
+    { key: 'robot_code', label: '机器人编码', placeholder: 'dingxxxxxxxx', type: 'text', tooltip: '机器人 robot_code，群聊场景建议配置', showIf: { field: 'message_type', value: 'card' } },
+  ],
+  feishu: [
+    { key: 'app_id', label: 'App ID', placeholder: 'cli_xxxxxxxx', required: true, type: 'text', tooltip: '飞书开放平台应用的 App ID' },
+    { key: 'app_secret', label: 'App Secret', placeholder: 'xxxxxxxxxxxxxxxx', required: true, sensitive: true, type: 'password', tooltip: '飞书开放平台应用的 App Secret' },
+    { key: 'connection_mode', label: '接入模式', placeholder: '', type: 'select', defaultValue: 'webhook', tooltip: 'Webhook 需要公网回调地址；WebSocket 长连接无需公网 IP，适合本地开发和内网部署', options: [{ label: 'Webhook（HTTP 回调）', value: 'webhook' }, { label: 'WebSocket（长连接）', value: 'websocket' }] },
+    { key: 'domain', label: '服务区域', placeholder: '', type: 'select', defaultValue: 'feishu', tooltip: '国内版使用 feishu（open.feishu.cn），国际版使用 lark（open.larksuite.com）', options: [{ label: '飞书（国内版）', value: 'feishu' }, { label: 'Lark（国际版）', value: 'lark' }] },
+    { key: 'verification_token', label: '验证 Token', placeholder: 'xxxxxxxx', type: 'text', tooltip: '事件订阅的 Verification Token（Webhook 模式需要）' },
+    { key: 'encrypt_key', label: '加密密钥', placeholder: '可选，事件加密密钥', sensitive: true, type: 'password', tooltip: 'Encrypt Key，用于事件回调的消息解密（可选）' },
+    { key: 'enable_reaction', label: '消息反应', placeholder: '', type: 'switch', defaultValue: true, tooltip: '收到消息后自动添加 👍 表情反应，让用户知道消息已收到' },
+    { key: 'enable_nickname_cache', label: '昵称获取', placeholder: '', type: 'switch', defaultValue: true, tooltip: '通过联系人 API 获取用户真实昵称（需要 contact:user.base:readonly 权限）' },
+    { key: 'media_download_enabled', label: '媒体下载', placeholder: '', type: 'switch', defaultValue: false, tooltip: '下载消息中的图片和文件到本地（保存至 ~/.mateclaw/media/feishu/）' },
+  ],
+  telegram: [
+    { key: 'bot_token', label: 'Bot Token', placeholder: '123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11', required: true, sensitive: true, type: 'password', tooltip: '从 @BotFather 获取的 Bot Token' },
+    { key: 'show_typing', label: '显示输入状态', placeholder: '', type: 'switch', defaultValue: true, tooltip: '发送回复前持续显示"正在输入..."状态（每 4 秒刷新）' },
+    { key: 'connection_mode', label: '接入模式', placeholder: '', type: 'select', defaultValue: 'polling', tooltip: 'Long-Polling 无需公网 IP（推荐）；Webhook 需要公网回调地址', options: [{ label: 'Long-Polling（轮询，推荐）', value: 'polling' }, { label: 'Webhook（HTTP 回调）', value: 'webhook' }] },
+    { key: 'polling_timeout', label: '轮询超时（秒）', placeholder: '20', type: 'number', defaultValue: 20, tooltip: 'Long-Polling 超时时间，服务器在有新消息时立即返回', showIf: { field: 'connection_mode', value: 'polling' } },
+    { key: 'webhook_url', label: 'Webhook URL', placeholder: 'https://your-domain.com/api/v1/channels/webhook/telegram', type: 'text', tooltip: '公网可访问的回调地址，系统会自动调用 setWebhook 注册', showIf: { field: 'connection_mode', value: 'webhook' } },
+    { key: 'http_proxy', label: 'HTTP 代理', placeholder: 'http://127.0.0.1:7890', type: 'text', tooltip: 'HTTP 代理地址（国内访问 Telegram API 需要）' },
+  ],
+  discord: [
+    { key: 'bot_token', label: 'Bot Token', placeholder: 'MTxxxxxxxx.xxxxxxxx.xxxxxxxx', required: true, sensitive: true, type: 'password', tooltip: 'Discord Developer Portal 中获取的 Bot Token' },
+    { key: 'accept_bot_messages', label: '接收 Bot 消息', placeholder: '', type: 'switch', defaultValue: false, tooltip: '是否接收来自其他 Bot 的消息' },
+    { key: 'http_proxy', label: 'HTTP 代理', placeholder: 'http://127.0.0.1:7890', type: 'text', tooltip: 'HTTP 代理地址（可选，用于 Gateway WebSocket 和 REST API 连接）' },
+  ],
+  wecom: [
+    { key: 'bot_id', label: '机器人 ID', placeholder: 'bot_xxxxxxxxxx', required: true, type: 'text', tooltip: '企业微信智能机器人的 Bot ID（在企业微信后台创建智能机器人后获取）' },
+    { key: 'secret', label: 'Secret', placeholder: 'xxxxxxxxxxxxxxxx', required: true, sensitive: true, type: 'password', tooltip: '企业微信智能机器人的 Secret' },
+    { key: 'welcome_text', label: '欢迎消息', placeholder: '你好！我是你的 AI 助手', type: 'text', tooltip: '用户首次进入对话时自动发送的欢迎消息（留空则不发送）' },
+    { key: 'media_download_enabled', label: '媒体下载', placeholder: '', type: 'switch', defaultValue: false, tooltip: '下载消息中的图片和文件到本地并解密（需要本地磁盘空间）' },
+    { key: 'media_dir', label: '媒体目录', placeholder: 'data/media', type: 'text', tooltip: '媒体文件保存目录（默认 data/media）' },
+    { key: 'max_reconnect_attempts', label: '最大重连次数', placeholder: '-1 表示无限重连', type: 'number', defaultValue: -1, tooltip: 'WebSocket 断线后最大重连次数，-1 为无限重连' },
+  ],
+  weixin: [
+    { key: 'bot_token', label: 'Bot Token', placeholder: '扫码登录后自动获取', required: true, sensitive: true, type: 'password', tooltip: '微信 iLink Bot Token，通过扫描二维码登录获取' },
+    { key: 'base_url', label: 'API 地址', placeholder: 'https://ilinkai.weixin.qq.com', type: 'text', defaultValue: 'https://ilinkai.weixin.qq.com', tooltip: 'iLink Bot API 基础地址（通常无需修改）' },
+    { key: 'media_download_enabled', label: '媒体下载', placeholder: '', type: 'switch', defaultValue: false, tooltip: '下载消息中的图片、文件、视频到本地并解密' },
+    { key: 'media_dir', label: '媒体目录', placeholder: 'data/media', type: 'text', tooltip: '媒体文件保存目录（默认 data/media）' },
+  ],
+  qq: [
+    { key: 'app_id', label: 'AppID', placeholder: '102xxxxxx', required: true, type: 'text', tooltip: 'QQ 开放平台机器人的 AppID' },
+    { key: 'client_secret', label: 'AppSecret', placeholder: 'xxxxxxxxxxxxxxxx', required: true, sensitive: true, type: 'password', tooltip: 'QQ 开放平台机器人的 AppSecret' },
+    { key: 'markdown_enabled', label: 'Markdown 消息', placeholder: '', type: 'switch', defaultValue: true, tooltip: '发送消息时使用 Markdown 格式（部分场景下 QQ 可能不支持，可关闭回退到纯文本）' },
+    { key: 'max_reconnect_attempts', label: '最大重连次数', placeholder: '100', type: 'number', defaultValue: 100, tooltip: 'WebSocket 断线后最大重连次数' },
+  ],
+}
+
+// ==================== 流控制 ====================
+
+/** 流阶段（前后端统一命名） */
+export type StreamPhase =
+  | 'thinking'         // 模型推理中
+  | 'streaming'        // 正在输出文本
+  | 'executing_tool'   // 正在执行工具
+  | 'awaiting_approval' // 等待审批
+  | 'interrupting'     // 正在中断
+  | 'queued'           // 有排队消息
+  | 'reconnecting'     // 正在重连
+  | 'stopped'          // 已停止
+  | 'completed'        // 已完成
+  | 'idle'             // 空闲
+
+/** 排队的用户消息 */
+export interface QueuedMessage {
+  /** 消息内容 */
+  content: string
+  /** 入队时间 */
+  enqueuedAt: number
+  /** 状态 */
+  status: 'queued' | 'sending' | 'cancelled'
+  /** 内容块（延迟创建用户消息时使用） */
+  contentParts?: MessageContentPart[]
+  /** 所属会话 ID */
+  conversationId?: string
+}
+
+/** 心跳事件数据 */
+export interface HeartbeatData {
+  conversationId: string
+  currentPhase: string
+  waitingReason: string
+  runningToolName: string
+  queueLength: number
+  timestamp: number
+}
+
+/** 中断响应 */
+export interface InterruptResponse {
+  interrupted: boolean
+  queued: boolean
+  reason: string
+}
+
+// ==================== 计划 ====================
+export interface SubPlan {
+  id: string | number
+  planId: string | number
+  stepIndex: number
+  description: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  result?: string
+  startTime?: string
+  endTime?: string
+}
+
+export interface Plan {
+  id: string | number
+  agentId: string
+  goal: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  totalSteps: number
+  completedSteps: number
+  summary?: string
+  steps?: SubPlan[]
+  createTime: string
+}
+
+// ==================== 工作区文件 ====================
+export interface WorkspaceFile {
+  id: string | number
+  agentId: string | number
+  filename: string
+  content?: string
+  fileSize: number
+  enabled: boolean
+  sortOrder: number
+  createTime: string
+  updateTime: string
+}
+
+// ==================== 通用分页 ====================
+export interface PageResult<T> {
+  records: T[]
+  total: number
+  size: number
+  current: number
+}
+
+// ==================== 模型与设置 ====================
+export interface ModelConfig {
+  id: string | number
+  name: string
+  provider: string
+  modelName: string
+  description?: string
+  temperature?: number
+  maxTokens?: number
+  topP?: number
+  enableSearch?: boolean
+  searchStrategy?: string
+  enabled: boolean
+  isDefault: boolean
+  createTime?: string
+  updateTime?: string
+}
+
+export interface SystemSettings {
+  language: 'zh-CN' | 'en-US'
+  streamEnabled: boolean
+  debugMode: boolean
+  // 搜索服务配置
+  searchEnabled: boolean
+  searchProvider: 'serper' | 'tavily'
+  searchFallbackEnabled: boolean
+  serperApiKey?: string
+  serperBaseUrl: string
+  tavilyApiKey?: string
+  tavilyBaseUrl: string
+  serperApiKeyMasked?: string
+  tavilyApiKeyMasked?: string
+}
+
+export interface ProviderModelInfo {
+  id: string
+  name: string
+}
+
+export interface ProviderInfo {
+  id: string
+  name: string
+  protocol?: string
+  apiKeyPrefix?: string
+  chatModel?: string
+  models: ProviderModelInfo[]
+  extraModels: ProviderModelInfo[]
+  isCustom: boolean
+  isLocal: boolean
+  supportModelDiscovery: boolean
+  supportConnectionCheck: boolean
+  freezeUrl: boolean
+  requireApiKey: boolean
+  configured: boolean
+  available: boolean
+  apiKey?: string
+  baseUrl?: string
+  generateKwargs?: Record<string, unknown>
+}
+
+export interface ActiveModelsInfo {
+  activeLlm?: {
+    providerId: string
+    model: string
+  }
+}
+
+export interface DiscoverResult {
+  discoveredModels: ProviderModelInfo[]
+  newModels: ProviderModelInfo[]
+  totalDiscovered: number
+  newCount: number
+}
+
+export interface TestResult {
+  success: boolean
+  latencyMs: number
+  message?: string
+  errorMessage?: string
+}
+
+// ==================== 安全 ====================
+
+export type GuardSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO'
+export type GuardCategory =
+  | 'COMMAND_INJECTION'
+  | 'DATA_EXFILTRATION'
+  | 'PATH_TRAVERSAL'
+  | 'SENSITIVE_FILE_ACCESS'
+  | 'NETWORK_ABUSE'
+  | 'CREDENTIAL_EXPOSURE'
+  | 'RESOURCE_ABUSE'
+  | 'CODE_EXECUTION'
+  | 'PRIVILEGE_ESCALATION'
+export type GuardDecision = 'ALLOW' | 'NEEDS_APPROVAL' | 'BLOCK'
+
+export interface GuardFinding {
+  ruleId: string
+  severity: GuardSeverity
+  category: GuardCategory
+  title: string
+  description?: string
+  remediation?: string
+  toolName?: string
+  paramName?: string
+  matchedPattern?: string
+  snippet?: string
+}
+
+export interface GuardRule {
+  id: string | number
+  ruleId: string
+  name: string
+  description?: string
+  toolName?: string
+  paramName?: string
+  category: string
+  severity: string
+  decision: string
+  pattern: string
+  excludePattern?: string
+  remediation?: string
+  builtin: boolean
+  enabled: boolean
+  priority: number
+  createTime?: string
+  updateTime?: string
+}
+
+export interface GuardConfig {
+  id: string | number
+  enabled: boolean
+  guardScope: string
+  guardedToolsJson?: string
+  deniedToolsJson?: string
+  fileGuardEnabled: boolean
+  sensitivePathsJson?: string
+}
+
+export interface AuditLogEntry {
+  id: string | number
+  conversationId?: string
+  agentId?: string
+  userId?: string
+  channelType?: string
+  toolName: string
+  toolParamsJson?: string
+  decision: string
+  maxSeverity?: string
+  findingsJson?: string
+  pendingId?: string
+  createTime: string
+}
+
+export interface AuditStats {
+  total: number
+  blocked: number
+  needsApproval: number
+  allowed: number
+}
+
+// ==================== 定时任务 ====================
+export interface CronJob {
+  id: string | number
+  name: string
+  cronExpression: string
+  timezone: string
+  agentId: string | number
+  agentName?: string
+  taskType: 'text' | 'agent'
+  triggerMessage?: string
+  requestBody?: string
+  enabled: boolean
+  nextRunTime?: string
+  lastRunTime?: string
+  createTime?: string
+  updateTime?: string
+}

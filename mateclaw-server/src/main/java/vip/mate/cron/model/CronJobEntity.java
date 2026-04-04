@@ -1,0 +1,60 @@
+package vip.mate.cron.model;
+
+import com.baomidou.mybatisplus.annotation.*;
+import lombok.Data;
+
+import java.time.LocalDateTime;
+
+/**
+ * 定时任务实体
+ *
+ * @author MateClaw Team
+ */
+@Data
+@TableName("mate_cron_job")
+public class CronJobEntity {
+
+    @TableId(type = IdType.ASSIGN_ID)
+    private Long id;
+
+    /** 任务名称 */
+    private String name;
+
+    /** 5 字段 cron 表达式（分 时 日 月 周） */
+    private String cronExpression;
+
+    /** 时区 */
+    private String timezone;
+
+    /** 关联 Agent ID */
+    private Long agentId;
+
+    /** 任务类型：text | agent */
+    private String taskType;
+
+    /** 触发消息（task_type=text 时使用） */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private String triggerMessage;
+
+    /** 执行目标（task_type=agent 时使用） */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private String requestBody;
+
+    /** 是否启用 */
+    private Boolean enabled;
+
+    /** 下次执行时间 */
+    private LocalDateTime nextRunTime;
+
+    /** 上次执行时间 */
+    private LocalDateTime lastRunTime;
+
+    @TableField(fill = FieldFill.INSERT)
+    private LocalDateTime createTime;
+
+    @TableField(fill = FieldFill.INSERT_UPDATE)
+    private LocalDateTime updateTime;
+
+    @TableLogic
+    private Integer deleted;
+}

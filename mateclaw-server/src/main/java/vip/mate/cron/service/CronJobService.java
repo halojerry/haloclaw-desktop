@@ -1,0 +1,421 @@
+package vip.mate.cron.service;
+
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import jakarta.annotation.PreDestroy;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.ApplicationArguments;
+import org.springframework.boot.ApplicationRunner;
+import org.springframework.core.annotation.Order;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
+import org.springframework.scheduling.support.CronExpression;
+import org.springframework.scheduling.support.CronTrigger;
+import org.springframework.stereotype.Service;
+import vip.mate.agent.AgentService;
+import vip.mate.agent.model.AgentEntity;
+import vip.mate.agent.repository.AgentMapper;
+import vip.mate.cron.model.CronJobDTO;
+import vip.mate.cron.model.CronJobEntity;
+import vip.mate.cron.repository.CronJobMapper;
+import org.springframework.context.ApplicationEventPublisher;
+import vip.mate.exception.MateClawException;
+import vip.mate.memory.event.ConversationCompletedEvent;
+import vip.mate.workspace.conversation.ConversationService;
+
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.stream.Collectors;
+
+/**
+ * 定时任务业务服务
+ *
+ * @author MateClaw Team
+ */
+@Slf4j
+@Service
+@Order(210)
+@RequiredArgsConstructor
+public class CronJobService implements ApplicationRunner {
+
+    private final CronJobMapper cronJobMapper;
+    private final AgentMapper agentMapper;
+    private final AgentService agentService;
+    private final ConversationService conversationService;
+    private final ApplicationEventPublisher eventPublisher;
+
+    private final ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
+    private final ConcurrentHashMap<Long, ScheduledFuture<?>> scheduledTasks = new ConcurrentHashMap<>();
+    private final ReentrantLock schedulerLock = new ReentrantLock();
+
+    /** 定时任务触发时使用的系统用户标识 */
+    private static final String SYSTEM_USER = "system";
+
+    // ==================== 初始化与销毁 ====================
+
+    /**
+     * 实现 ApplicationRunner，确保在 CronSchemaMigration(@Order=200) 执行完毕后再加载任务
+     */
+    @Override
+    public void run(ApplicationArguments args) {
+        scheduler.setPoolSize(4);
+        scheduler.setThreadNamePrefix("cron-job-");
+        scheduler.initialize();
+
+        List<CronJobEntity> enabledJobs = cronJobMapper.selectList(
+                new LambdaQueryWrapper<CronJobEntity>()
+                        .eq(CronJobEntity::getEnabled, true));
+        for (CronJobEntity job : enabledJobs) {
+            try {
+                register(job);
+            } catch (Exception e) {
+                log.warn("[CronJob] Failed to register job {} on startup: {}", job.getId(), e.getMessage());
+            }
+        }
+        log.info("[CronJob] Scheduler initialized, {} jobs registered", enabledJobs.size());
+    }
+
+    @PreDestroy
+    public void destroy() {
+        scheduler.shutdown();
+    }
+
+    // ==================== CRUD ====================
+
+    public List<CronJobDTO> list() {
+        List<CronJobEntity> entities = cronJobMapper.selectList(
+                new LambdaQueryWrapper<CronJobEntity>()
+                        .orderByDesc(CronJobEntity::getCreateTime));
+
+        // 批量加载 Agent 名称
+        List<Long> agentIds = entities.stream()
+                .map(CronJobEntity::getAgentId)
+                .distinct()
+                .collect(Collectors.toList());
+        Map<Long, String> agentNameMap = agentIds.isEmpty() ? Map.of() :
+                agentMapper.selectBatchIds(agentIds).stream()
+                        .collect(Collectors.toMap(AgentEntity::getId, AgentEntity::getName));
+
+        return entities.stream()
+                .map(e -> CronJobDTO.from(e, agentNameMap.getOrDefault(e.getAgentId(), "Unknown")))
+                .collect(Collectors.toList());
+    }
+
+    public CronJobDTO getById(Long id) {
+        CronJobEntity entity = cronJobMapper.selectById(id);
+        if (entity == null) {
+            throw new MateClawException("定时任务不存在: " + id);
+        }
+        AgentEntity agent = agentMapper.selectById(entity.getAgentId());
+        return CronJobDTO.from(entity, agent != null ? agent.getName() : "Unknown");
+    }
+
+    public CronJobDTO create(CronJobDTO dto) {
+        validateDto(dto);
+        // toSpringCron 校验表达式合法性，结果复用于后续 calcNextRunTime 和 register
+        String springCron = toSpringCron(dto.getCronExpression());
+
+        CronJobEntity entity = dto.toEntity();
+        if (entity.getTimezone() == null) entity.setTimezone("Asia/Shanghai");
+        if (entity.getTaskType() == null) entity.setTaskType("text");
+        if (entity.getEnabled() == null) entity.setEnabled(true);
+
+        entity.setNextRunTime(calcNextRunTime(springCron, entity.getTimezone()));
+        cronJobMapper.insert(entity);
+
+        if (Boolean.TRUE.equals(entity.getEnabled())) {
+            // register() 内部会再次调用 toSpringCron，但表达式已校验过，不会抛异常
+            register(entity);
+        }
+
+        return getById(entity.getId());
+    }
+
+    public CronJobDTO update(Long id, CronJobDTO dto) {
+        CronJobEntity existing = cronJobMapper.selectById(id);
+        if (existing == null) {
+            throw new MateClawException("定时任务不存在: " + id);
+        }
+        validateDto(dto);
+        String springCron = toSpringCron(dto.getCronExpression());
+
+        existing.setName(dto.getName());
+        existing.setCronExpression(dto.getCronExpression());
+        existing.setTimezone(dto.getTimezone() != null ? dto.getTimezone() : "Asia/Shanghai");
+        existing.setAgentId(dto.getAgentId());
+        existing.setTaskType(dto.getTaskType());
+        existing.setTriggerMessage(dto.getTriggerMessage());
+        existing.setRequestBody(dto.getRequestBody());
+        if (dto.getEnabled() != null) {
+            existing.setEnabled(dto.getEnabled());
+        }
+        existing.setNextRunTime(calcNextRunTime(springCron, existing.getTimezone()));
+
+        cronJobMapper.updateById(existing);
+
+        // 加锁保证 cancel + register 的原子性（ReentrantLock 支持同线程重入）
+        schedulerLock.lock();
+        try {
+            cancel(id);
+            if (Boolean.TRUE.equals(existing.getEnabled())) {
+                register(existing);
+            }
+        } finally {
+            schedulerLock.unlock();
+        }
+
+        return getById(id);
+    }
+
+    public void delete(Long id) {
+        CronJobEntity entity = cronJobMapper.selectById(id);
+        if (entity == null) {
+            throw new MateClawException("定时任务不存在: " + id);
+        }
+        schedulerLock.lock();
+        try {
+            cancel(id);
+        } finally {
+            schedulerLock.unlock();
+        }
+        cronJobMapper.deleteById(id);
+    }
+
+    public void toggle(Long id, Boolean enabled) {
+        CronJobEntity entity = cronJobMapper.selectById(id);
+        if (entity == null) {
+            throw new MateClawException("定时任务不存在: " + id);
+        }
+        entity.setEnabled(enabled);
+
+        // 先更新 DB，再同步调度器；避免调度器已注册但 DB 未持久化的不一致状态
+        if (Boolean.TRUE.equals(enabled)) {
+            String springCron = toSpringCron(entity.getCronExpression());
+            entity.setNextRunTime(calcNextRunTime(springCron, entity.getTimezone()));
+        } else {
+            entity.setNextRunTime(null);
+        }
+        cronJobMapper.updateById(entity);
+
+        // 加锁保证 cancel + register 的原子性
+        schedulerLock.lock();
+        try {
+            cancel(id);
+            if (Boolean.TRUE.equals(enabled)) {
+                register(entity);
+            }
+        } finally {
+            schedulerLock.unlock();
+        }
+    }
+
+    public void runNow(Long id) {
+        CronJobEntity entity = cronJobMapper.selectById(id);
+        if (entity == null) {
+            throw new MateClawException("定时任务不存在: " + id);
+        }
+        // 异步执行，不阻塞请求线程
+        scheduler.submit(() -> executeJob(entity));
+    }
+
+    // ==================== 调度器管理 ====================
+
+    private void register(CronJobEntity job) {
+        schedulerLock.lock();
+        try {
+            cancel(job.getId());
+            String springCron = toSpringCron(job.getCronExpression());
+            ZoneId zoneId = ZoneId.of(job.getTimezone());
+            CronTrigger trigger = new CronTrigger(springCron, zoneId);
+            ScheduledFuture<?> future = scheduler.schedule(() -> executeJob(job), trigger);
+            scheduledTasks.put(job.getId(), future);
+            log.info("[CronJob] Registered job {} ({}), cron={}, tz={}", job.getId(), job.getName(),
+                    job.getCronExpression(), job.getTimezone());
+        } finally {
+            schedulerLock.unlock();
+        }
+    }
+
+    private void cancel(Long jobId) {
+        ScheduledFuture<?> f = scheduledTasks.remove(jobId);
+        if (f != null) {
+            f.cancel(false);
+        }
+    }
+
+    // ==================== 任务执行 ====================
+
+    private void executeJob(CronJobEntity job) {
+        String conversationId = "cron:" + job.getId();
+        try {
+            log.info("[CronJob] Executing job {} ({}), type={}", job.getId(), job.getName(), job.getTaskType());
+
+            // 确保会话存在（使用 SYSTEM_USER 作为定时触发的所有者标识）
+            conversationService.getOrCreateConversation(conversationId, job.getAgentId(), SYSTEM_USER);
+
+            String userMessage;
+            String result;
+            if ("agent".equals(job.getTaskType())) {
+                userMessage = job.getRequestBody();
+                // 保存 user 消息
+                conversationService.saveMessage(conversationId, "user", userMessage);
+                result = agentService.execute(job.getAgentId(), userMessage, conversationId);
+            } else {
+                userMessage = job.getTriggerMessage();
+                // 保存 user 消息
+                conversationService.saveMessage(conversationId, "user", userMessage);
+                result = agentService.chat(job.getAgentId(), userMessage, conversationId);
+            }
+
+            // 保存 assistant 消息
+            conversationService.saveMessage(conversationId, "assistant", result);
+
+            // 发布对话完成事件
+            try {
+                int msgCount = conversationService.getMessageCount(conversationId);
+                eventPublisher.publishEvent(new ConversationCompletedEvent(
+                        job.getAgentId(), conversationId, userMessage, result, msgCount, "cron"));
+            } catch (Exception ex) {
+                log.debug("[Memory] Failed to publish ConversationCompletedEvent: {}", ex.getMessage());
+            }
+
+            // 合并更新 lastRunTime + nextRunTime，单次 DB 写入
+            updateRunTimes(job.getId(), job.getCronExpression(), job.getTimezone());
+
+            log.info("[CronJob] Job {} executed successfully, result length={}", job.getId(),
+                    result != null ? result.length() : 0);
+        } catch (Exception e) {
+            log.error("[CronJob] Job {} execution failed: {}", job.getId(), e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 合并更新 lastRunTime 和 nextRunTime，单次 DB 写入替代原来的 4 次 selectById + updateById
+     */
+    private void updateRunTimes(Long jobId, String cronExpression, String timezone) {
+        try {
+            String springCron = toSpringCron(cronExpression);
+            LocalDateTime nextRun = calcNextRunTime(springCron, timezone);
+            cronJobMapper.update(null, new LambdaUpdateWrapper<CronJobEntity>()
+                    .eq(CronJobEntity::getId, jobId)
+                    .set(CronJobEntity::getLastRunTime, LocalDateTime.now())
+                    .set(CronJobEntity::getNextRunTime, nextRun));
+        } catch (Exception e) {
+            log.warn("[CronJob] Failed to update run times for job {}: {}", jobId, e.getMessage());
+        }
+    }
+
+    // ==================== Cron 工具方法 ====================
+
+    /**
+     * 5 字段用户 cron → 6 字段 Spring cron
+     */
+    private String toSpringCron(String cron) {
+        String[] parts = cron.trim().split("\\s+");
+        if (parts.length != 5) {
+            throw new MateClawException("Cron 表达式必须是 5 字段（分 时 日 月 周）");
+        }
+        // 标准化 day-of-week
+        parts[4] = normalizeDayOfWeek(parts[4]);
+        String springCron = "0 " + String.join(" ", parts);
+        try {
+            CronExpression.parse(springCron);
+        } catch (IllegalArgumentException e) {
+            throw new MateClawException("Cron 表达式非法: " + e.getMessage());
+        }
+        return springCron;
+    }
+
+    /**
+     * 标准化 day-of-week 字段：将独立的 7（Sunday）归一化为 0
+     * 支持单值、列表、范围、步长格式
+     */
+    private String normalizeDayOfWeek(String dow) {
+        // 处理逗号分隔的列表
+        String[] tokens = dow.split(",");
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < tokens.length; i++) {
+            if (i > 0) sb.append(",");
+            sb.append(normalizeToken(tokens[i]));
+        }
+        return sb.toString();
+    }
+
+    private String normalizeToken(String token) {
+        // 处理步长：如 1-7/2 或 */2
+        int slashIdx = token.indexOf('/');
+        if (slashIdx >= 0) {
+            String base = token.substring(0, slashIdx);
+            String step = token.substring(slashIdx + 1);
+            return normalizeRangeOrValue(base) + "/" + step;
+        }
+        // 处理范围：如 1-5
+        int dashIdx = token.indexOf('-');
+        if (dashIdx >= 0) {
+            return normalizeRangeOrValue(token);
+        }
+        // 单值
+        return normalizeSingleValue(token);
+    }
+
+    private String normalizeRangeOrValue(String expr) {
+        int dashIdx = expr.indexOf('-');
+        if (dashIdx >= 0) {
+            String start = normalizeSingleValue(expr.substring(0, dashIdx));
+            String end = normalizeSingleValue(expr.substring(dashIdx + 1));
+            return start + "-" + end;
+        }
+        return normalizeSingleValue(expr);
+    }
+
+    private String normalizeSingleValue(String val) {
+        if ("7".equals(val.trim())) {
+            return "0";
+        }
+        return val;
+    }
+
+    /**
+     * 计算下次执行时间
+     */
+    private LocalDateTime calcNextRunTime(String springCron, String timezone) {
+        try {
+            CronExpression cronExpression = CronExpression.parse(springCron);
+            ZoneId zoneId = ZoneId.of(timezone);
+            ZonedDateTime next = cronExpression.next(ZonedDateTime.now(zoneId));
+            if (next != null) {
+                return next.withZoneSameInstant(ZoneId.systemDefault()).toLocalDateTime();
+            }
+        } catch (Exception e) {
+            log.warn("[CronJob] Failed to calculate next run time: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    // ==================== 校验 ====================
+
+    private void validateDto(CronJobDTO dto) {
+        if (dto.getName() == null || dto.getName().isBlank()) {
+            throw new MateClawException("任务名称不能为空");
+        }
+        if (dto.getAgentId() == null) {
+            throw new MateClawException("请选择关联 Agent");
+        }
+        if (dto.getCronExpression() == null || dto.getCronExpression().isBlank()) {
+            throw new MateClawException("Cron 表达式不能为空");
+        }
+        String taskType = dto.getTaskType() != null ? dto.getTaskType() : "text";
+        if ("text".equals(taskType) && (dto.getTriggerMessage() == null || dto.getTriggerMessage().isBlank())) {
+            throw new MateClawException("触发消息不能为空");
+        }
+        if ("agent".equals(taskType) && (dto.getRequestBody() == null || dto.getRequestBody().isBlank())) {
+            throw new MateClawException("执行目标不能为空");
+        }
+    }
+}

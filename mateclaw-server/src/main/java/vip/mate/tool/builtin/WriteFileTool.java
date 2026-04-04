@@ -1,0 +1,96 @@
+package vip.mate.tool.builtin;
+
+import cn.hutool.json.JSONObject;
+import cn.hutool.json.JSONUtil;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
+import org.springframework.stereotype.Component;
+
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+
+/**
+ * 内置工具：写入文件
+ * <p>
+ * 创建新文件或完全覆写已有文件。自动创建不存在的父目录。
+ * 创建新文件或完全覆写已有文件。
+ * <p>
+ * 安全说明：
+ * <ul>
+ *   <li>写入操作经过 ToolGuard 审批（DefaultToolGuard 对 file_write 工具默认返回 NEEDS_APPROVAL）</li>
+ *   <li>覆写已有文件前需要用户确认</li>
+ * </ul>
+ *
+ * @author MateClaw Team
+ */
+@Slf4j
+@Component
+public class WriteFileTool {
+
+    @Tool(description = "将内容写入指定文件。如果文件已存在则完全覆写，不存在则创建新文件（自动创建父目录）。"
+            + "返回包含 filePath、bytesWritten 的结构化 JSON 结果。"
+            + "注意：此操作会覆盖已有文件内容，需要用户审批确认。")
+    public String write_file(
+            @ToolParam(description = "文件的绝对路径或相对路径") String filePath,
+            @ToolParam(description = "要写入的文件内容") String content) {
+
+        JSONObject result = new JSONObject();
+        result.set("filePath", filePath);
+
+        try {
+            if (filePath == null || filePath.isBlank()) {
+                return errorResult(filePath, "文件路径不能为空");
+            }
+            if (content == null) {
+                content = "";
+            }
+
+            Path path = Paths.get(filePath).toAbsolutePath().normalize();
+
+            // 如果路径是已有目录，拒绝
+            if (Files.isDirectory(path)) {
+                return errorResult(filePath, "路径是一个已有目录，无法作为文件写入: " + path);
+            }
+
+            // 自动创建父目录
+            Path parent = path.getParent();
+            if (parent != null && !Files.exists(parent)) {
+                Files.createDirectories(parent);
+                log.info("[WriteFile] Created parent directories: {}", parent);
+            }
+
+            boolean existed = Files.exists(path);
+
+            // 写入文件
+            byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
+            Files.write(path, bytes);
+
+            result.set("bytesWritten", bytes.length);
+            result.set("created", !existed);
+            result.set("overwritten", existed);
+            result.set("message", existed
+                    ? "文件已覆写: " + path + " (" + bytes.length + " 字节)"
+                    : "文件已创建: " + path + " (" + bytes.length + " 字节)");
+
+            log.info("[WriteFile] {} file: {} ({} bytes)",
+                    existed ? "Overwritten" : "Created", path, bytes.length);
+
+        } catch (Exception e) {
+            log.error("[WriteFile] Failed to write file: {}", e.getMessage(), e);
+            return errorResult(filePath, "写入文件异常: " + e.getMessage());
+        }
+
+        return JSONUtil.toJsonPrettyStr(result);
+    }
+
+    private String errorResult(String filePath, String message) {
+        JSONObject result = new JSONObject();
+        result.set("filePath", filePath);
+        result.set("error", true);
+        result.set("message", message);
+        return JSONUtil.toJsonPrettyStr(result);
+    }
+}

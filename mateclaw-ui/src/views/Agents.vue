@@ -1,0 +1,394 @@
+<template>
+  <div class="page-container">
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">{{ t('agents.title') }}</h1>
+        <p class="page-desc">{{ t('agents.desc') }}</p>
+      </div>
+      <button class="btn-primary" @click="openCreateModal">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+        </svg>
+        {{ t('agents.newAgent') }}
+      </button>
+    </div>
+
+    <!-- Filter bar -->
+    <div class="filter-bar">
+      <div class="search-box">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        <input v-model="searchText" :placeholder="t('agents.search')" class="search-input" />
+      </div>
+      <div class="filter-tabs">
+        <button v-for="tab in filterTabs" :key="tab.value" class="filter-tab"
+          :class="{ active: activeFilter === tab.value }" @click="activeFilter = tab.value">
+          {{ t(tab.key) }}
+        </button>
+      </div>
+    </div>
+
+    <!-- Agent table -->
+    <div class="table-wrap" v-if="filteredAgents.length > 0">
+      <table class="agent-table">
+        <thead>
+          <tr>
+            <th class="col-name">{{ t('agents.columns.name') }}</th>
+            <th class="col-type">{{ t('agents.columns.agentType') }}</th>
+            <th class="col-tags">{{ t('agents.columns.tags') }}</th>
+            <th class="col-status">{{ t('agents.columns.enabled') }}</th>
+            <th class="col-time">{{ t('agents.columns.updateTime') }}</th>
+            <th class="col-actions">{{ t('agents.columns.actions') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="agent in filteredAgents" :key="agent.id" :class="{ 'row-disabled': !agent.enabled }">
+            <td class="col-name">
+              <div class="agent-name-cell">
+                <span class="agent-icon">{{ agent.icon || '🤖' }}</span>
+                <div class="agent-name-info">
+                  <span class="agent-name">{{ agent.name }}</span>
+                  <span class="agent-desc">{{ agent.description || t('agents.messages.noDescription') }}</span>
+                </div>
+              </div>
+            </td>
+            <td class="col-type">
+              <span class="tag type-tag">{{ agent.agentType === 'react' ? 'ReAct' : 'Plan-Execute' }}</span>
+            </td>
+            <td class="col-tags">
+              <div class="tags-cell" v-if="agent.tags">
+                <span v-for="tag in parseTags(agent.tags)" :key="tag" class="tag tag-item">{{ tag }}</span>
+              </div>
+              <span v-else class="text-muted">-</span>
+            </td>
+            <td class="col-status">
+              <label class="toggle-switch">
+                <input type="checkbox" :checked="agent.enabled" @change="toggleAgent(agent)" />
+                <span class="toggle-slider"></span>
+              </label>
+            </td>
+            <td class="col-time">
+              <span class="time-label">{{ formatTime(agent.updateTime) }}</span>
+            </td>
+            <td class="col-actions">
+              <div class="action-btns">
+                <button class="action-btn" :title="t('agents.actions.edit')" @click="openEditModal(agent)">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                  </svg>
+                </button>
+                <button class="action-btn danger" :title="t('agents.actions.delete')" @click="deleteAgent(agent)">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="3 6 5 6 21 6"/>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                  </svg>
+                </button>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Empty state -->
+    <div v-else class="empty-state">
+      <div class="empty-icon">🤖</div>
+      <h3>{{ t('agents.emptyTitle') }}</h3>
+      <p>{{ t('agents.emptyDesc') }}</p>
+      <button class="btn-primary" @click="openCreateModal">{{ t('agents.newAgent') }}</button>
+    </div>
+
+    <!-- Create/Edit Modal -->
+    <div v-if="showModal" class="modal-overlay" @click.self="closeModal">
+      <div class="modal">
+        <div class="modal-header">
+          <h2>{{ editingAgent ? t('agents.modal.editTitle') : t('agents.modal.newTitle') }}</h2>
+          <button class="modal-close" @click="closeModal">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="form-grid">
+            <div class="form-group">
+              <label class="form-label">{{ t('agents.fields.name') }} *</label>
+              <input v-model="form.name" class="form-input" :placeholder="t('agents.placeholders.name')" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">{{ t('agents.fields.icon') }}</label>
+              <input v-model="form.icon" class="form-input" :placeholder="t('agents.placeholders.icon')" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">{{ t('agents.fields.type') }}</label>
+              <select v-model="form.agentType" class="form-input">
+                <option value="react">{{ t('agents.types.react') }}</option>
+                <option value="plan_execute">{{ t('agents.types.planExecute') }}</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">{{ t('agents.fields.maxIterations') }}</label>
+              <input v-model.number="form.maxIterations" type="number" min="1" max="50" class="form-input" />
+            </div>
+            <div class="form-group full-width">
+              <label class="form-label">{{ t('agents.fields.description') }}</label>
+              <input v-model="form.description" class="form-input" :placeholder="t('agents.placeholders.description')" />
+            </div>
+            <div class="form-group full-width">
+              <label class="form-label">{{ t('agents.fields.systemPrompt') }}</label>
+              <textarea v-model="form.systemPrompt" class="form-textarea" rows="5" :placeholder="t('agents.placeholders.systemPrompt')"></textarea>
+            </div>
+            <div class="form-group">
+              <label class="form-label">{{ t('agents.fields.tags') }}</label>
+              <input v-model="form.tags" class="form-input" :placeholder="t('agents.placeholders.tags')" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">{{ t('agents.fields.enabled') }}</label>
+              <label class="toggle-switch" style="margin-top: 6px;">
+                <input type="checkbox" v-model="form.enabled" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-secondary" @click="closeModal">{{ t('common.cancel') }}</button>
+          <button class="btn-primary" @click="saveAgent" :disabled="!form.name">
+            {{ editingAgent ? t('agents.actions.update') : t('agents.actions.create') }}
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { agentApi } from '@/api/index'
+import type { Agent } from '@/types/index'
+
+const { t } = useI18n()
+const agents = ref<Agent[]>([])
+const searchText = ref('')
+const activeFilter = ref('all')
+const showModal = ref(false)
+const editingAgent = ref<Agent | null>(null)
+
+const filterTabs = [
+  { key: 'agents.tabs.all', value: 'all' },
+  { key: 'agents.tabs.react', value: 'react' },
+  { key: 'agents.tabs.planExecute', value: 'plan_execute' },
+  { key: 'agents.tabs.enabled', value: 'enabled' },
+  { key: 'agents.tabs.disabled', value: 'disabled' },
+]
+
+const defaultForm = (): Partial<Agent> & { name: string } => ({
+  name: '',
+  description: '',
+  agentType: 'react',
+  systemPrompt: '',
+  maxIterations: 10,
+  icon: '🤖',
+  tags: '',
+  enabled: true,
+})
+
+const form = ref(defaultForm())
+
+const filteredAgents = computed(() => {
+  let list = agents.value
+  if (searchText.value) {
+    const q = searchText.value.toLowerCase()
+    list = list.filter(a =>
+      a.name.toLowerCase().includes(q) ||
+      a.description?.toLowerCase().includes(q) ||
+      a.tags?.toLowerCase().includes(q)
+    )
+  }
+  if (activeFilter.value === 'react') list = list.filter(a => a.agentType === 'react')
+  else if (activeFilter.value === 'plan_execute') list = list.filter(a => a.agentType === 'plan_execute')
+  else if (activeFilter.value === 'enabled') list = list.filter(a => a.enabled)
+  else if (activeFilter.value === 'disabled') list = list.filter(a => !a.enabled)
+  return list
+})
+
+onMounted(() => {
+  loadAgents()
+})
+
+async function loadAgents() {
+  try {
+    const res: any = await agentApi.list()
+    agents.value = res.data || []
+  } catch {
+    ElMessage.error(t('agents.messages.loadFailed'))
+  }
+}
+
+function parseTags(tags: string): string[] {
+  return tags.split(',').map(s => s.trim()).filter(Boolean)
+}
+
+function formatTime(time?: string): string {
+  if (!time) return '-'
+  const d = new Date(time)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function openCreateModal() {
+  editingAgent.value = null
+  form.value = defaultForm()
+  showModal.value = true
+}
+
+function openEditModal(agent: Agent) {
+  editingAgent.value = agent
+  form.value = {
+    name: agent.name,
+    description: agent.description || '',
+    agentType: agent.agentType,
+    systemPrompt: agent.systemPrompt || '',
+    maxIterations: agent.maxIterations,
+    icon: agent.icon || '🤖',
+    tags: agent.tags || '',
+    enabled: agent.enabled,
+  }
+  showModal.value = true
+}
+
+function closeModal() {
+  showModal.value = false
+  editingAgent.value = null
+}
+
+async function saveAgent() {
+  try {
+    if (editingAgent.value) {
+      await agentApi.update(editingAgent.value.id, form.value)
+    } else {
+      await agentApi.create(form.value)
+    }
+    ElMessage.success(t('agents.messages.saveSuccess'))
+    closeModal()
+    await loadAgents()
+  } catch {
+    ElMessage.error(t('agents.messages.saveFailed'))
+  }
+}
+
+async function deleteAgent(agent: Agent) {
+  try {
+    await ElMessageBox.confirm(t('agents.messages.deleteConfirm'), t('agents.actions.delete'), { type: 'warning' })
+  } catch {
+    return
+  }
+  try {
+    await agentApi.delete(agent.id)
+    ElMessage.success(t('agents.messages.deleteSuccess'))
+    await loadAgents()
+  } catch {
+    ElMessage.error(t('agents.messages.deleteFailed'))
+  }
+}
+
+async function toggleAgent(agent: Agent) {
+  try {
+    await agentApi.update(agent.id, { ...agent, enabled: !agent.enabled })
+    ElMessage.success(t('agents.messages.toggleSuccess'))
+    await loadAgents()
+  } catch {
+    ElMessage.error(t('agents.messages.toggleFailed'))
+  }
+}
+</script>
+
+<style scoped>
+.page-container { height: 100%; overflow-y: auto; padding: 24px; background: var(--mc-bg); }
+.page-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 24px; }
+.page-title { font-size: 20px; font-weight: 700; color: var(--mc-text-primary); margin: 0 0 4px; }
+.page-desc { font-size: 14px; color: var(--mc-text-secondary); margin: 0; }
+
+.btn-primary { display: flex; align-items: center; gap: 6px; padding: 8px 16px; background: var(--mc-primary); color: white; border: none; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; transition: background 0.15s; }
+.btn-primary:hover { background: var(--mc-primary-hover); }
+.btn-primary:disabled { background: var(--mc-border); cursor: not-allowed; }
+.btn-secondary { padding: 8px 16px; background: var(--mc-bg-elevated); color: var(--mc-text-primary); border: 1px solid var(--mc-border); border-radius: 8px; font-size: 14px; cursor: pointer; }
+.btn-secondary:hover { background: var(--mc-bg-sunken); }
+
+.filter-bar { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+.search-box { display: flex; align-items: center; gap: 8px; background: var(--mc-bg-elevated); border: 1px solid var(--mc-border); border-radius: 8px; padding: 8px 12px; flex: 1; max-width: 300px; }
+.search-box svg { color: var(--mc-text-tertiary); flex-shrink: 0; }
+.search-input { border: none; outline: none; font-size: 14px; color: var(--mc-text-primary); flex: 1; background: transparent; }
+.filter-tabs { display: flex; gap: 4px; }
+.filter-tab { padding: 6px 14px; border: 1px solid var(--mc-border); background: var(--mc-bg-elevated); border-radius: 6px; font-size: 13px; color: var(--mc-text-secondary); cursor: pointer; transition: all 0.15s; }
+.filter-tab:hover { background: var(--mc-bg-sunken); }
+.filter-tab.active { background: var(--mc-primary-bg); border-color: var(--mc-primary); color: var(--mc-primary); font-weight: 500; }
+
+/* Table */
+.table-wrap { overflow-x: auto; border: 1px solid var(--mc-border); border-radius: 12px; background: var(--mc-bg-elevated); }
+.agent-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.agent-table th { padding: 12px 16px; text-align: left; font-weight: 600; font-size: 13px; color: var(--mc-text-secondary); background: var(--mc-bg-sunken); border-bottom: 1px solid var(--mc-border); white-space: nowrap; }
+.agent-table td { padding: 12px 16px; border-bottom: 1px solid var(--mc-border-light); vertical-align: middle; }
+.agent-table tbody tr:last-child td { border-bottom: none; }
+.agent-table tbody tr:hover { background: var(--mc-bg-sunken); }
+.agent-table tbody tr.row-disabled { opacity: 0.55; }
+
+.col-name { min-width: 200px; }
+.col-type { min-width: 110px; }
+.col-tags { min-width: 120px; }
+.col-status { min-width: 80px; }
+.col-time { min-width: 140px; }
+.col-actions { min-width: 90px; }
+
+.agent-name-cell { display: flex; align-items: center; gap: 10px; }
+.agent-icon { font-size: 20px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: var(--mc-primary-bg); border-radius: 8px; flex-shrink: 0; }
+.agent-name-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.agent-name { font-weight: 600; color: var(--mc-text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.agent-desc { font-size: 12px; color: var(--mc-text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+
+.tag { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 500; }
+.type-tag { background: var(--mc-primary-bg); color: var(--mc-primary); }
+.tag-item { background: var(--mc-bg-sunken); color: var(--mc-text-secondary); }
+.tags-cell { display: flex; gap: 4px; flex-wrap: wrap; }
+.time-label { font-size: 13px; color: var(--mc-text-tertiary); }
+.text-muted { color: var(--mc-text-tertiary); }
+
+.toggle-switch { position: relative; display: inline-block; width: 36px; height: 20px; cursor: pointer; flex-shrink: 0; }
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-slider { position: absolute; inset: 0; background: var(--mc-border); border-radius: 20px; transition: 0.2s; }
+.toggle-slider::before { content: ''; position: absolute; width: 14px; height: 14px; left: 3px; top: 3px; background: var(--mc-bg-elevated); border-radius: 50%; transition: 0.2s; }
+.toggle-switch input:checked + .toggle-slider { background: var(--mc-primary); }
+.toggle-switch input:checked + .toggle-slider::before { transform: translateX(16px); }
+
+.action-btns { display: flex; gap: 4px; }
+.action-btn { width: 30px; height: 30px; border: 1px solid var(--mc-border); background: var(--mc-bg-elevated); border-radius: 6px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--mc-text-secondary); transition: all 0.15s; }
+.action-btn:hover { background: var(--mc-bg-sunken); color: var(--mc-text-primary); }
+.action-btn.danger:hover { background: var(--mc-danger-bg); border-color: var(--mc-danger); color: var(--mc-danger); }
+
+/* Empty state */
+.empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 80px 20px; text-align: center; }
+.empty-icon { font-size: 48px; margin-bottom: 16px; }
+.empty-state h3 { font-size: 18px; font-weight: 600; color: var(--mc-text-primary); margin: 0 0 8px; }
+.empty-state p { font-size: 14px; color: var(--mc-text-tertiary); margin: 0 0 24px; }
+
+/* Modal */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 20px; }
+.modal { background: var(--mc-bg-elevated); border: 1px solid var(--mc-border); border-radius: 16px; width: 100%; max-width: 600px; max-height: 90vh; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0,0,0,0.15); }
+.modal-header { display: flex; align-items: center; justify-content: space-between; padding: 20px 24px; border-bottom: 1px solid var(--mc-border-light); }
+.modal-header h2 { font-size: 18px; font-weight: 600; color: var(--mc-text-primary); margin: 0; }
+.modal-close { width: 32px; height: 32px; border: none; background: none; cursor: pointer; color: var(--mc-text-tertiary); display: flex; align-items: center; justify-content: center; border-radius: 6px; }
+.modal-close:hover { background: var(--mc-bg-sunken); color: var(--mc-text-primary); }
+.modal-body { flex: 1; overflow-y: auto; padding: 20px 24px; }
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.form-group { display: flex; flex-direction: column; gap: 6px; }
+.form-group.full-width { grid-column: 1 / -1; }
+.form-label { font-size: 13px; font-weight: 500; color: var(--mc-text-secondary); }
+.form-input, .form-textarea { padding: 8px 12px; border: 1px solid var(--mc-border); border-radius: 8px; font-size: 14px; color: var(--mc-text-primary); outline: none; transition: border-color 0.15s; background: var(--mc-bg-sunken); }
+.form-input:focus, .form-textarea:focus { border-color: var(--mc-primary); box-shadow: 0 0 0 2px rgba(217,119,87,0.1); }
+.form-textarea { resize: vertical; font-family: inherit; }
+.modal-footer { display: flex; justify-content: flex-end; gap: 10px; padding: 16px 24px; border-top: 1px solid var(--mc-border-light); }
+</style>

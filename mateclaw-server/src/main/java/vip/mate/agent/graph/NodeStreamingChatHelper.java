@@ -1,0 +1,736 @@
+package vip.mate.agent.graph;
+
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.prompt.Prompt;
+import vip.mate.channel.web.ChatStreamTracker;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+
+/**
+ * 节点级流式 LLM 调用辅助
+ * <p>
+ * 核心原则：模型流驱动渠道流，State 只保存最终聚合结果。
+ * <ul>
+ *   <li>调用 {@code chatModel.stream(prompt)}，逐 chunk 处理</li>
+ *   <li>从每个 chunk 中提取 content delta 和 thinking delta（reasoningContent）</li>
+ *   <li>通过 {@link ChatStreamTracker} 实时广播 content_delta / thinking_delta</li>
+ *   <li>同时内部累积完整 text、thinking 和 tool calls</li>
+ *   <li>流结束后返回 {@link StreamResult} 供节点写回 State</li>
+ * </ul>
+ * <p>
+ * 所有面向用户的 LLM 节点（ReasoningNode、StepExecutionNode、PlanSummaryNode 等）
+ * 统一使用此 helper，而不是各自散落 {@code chatModel.call()}。
+ *
+ * @author MateClaw Team
+ */
+@Slf4j
+public class NodeStreamingChatHelper {
+
+    private final ChatStreamTracker streamTracker;
+
+    /** 备选模型（主模型连续失败后使用） */
+    private final ChatModel fallbackModel;
+
+    public NodeStreamingChatHelper(ChatStreamTracker streamTracker) {
+        this.streamTracker = streamTracker;
+        this.fallbackModel = null;
+    }
+
+    public NodeStreamingChatHelper(ChatStreamTracker streamTracker, ChatModel fallbackModel) {
+        this.streamTracker = streamTracker;
+        this.fallbackModel = fallbackModel;
+    }
+
+    /**
+     * 流式调用 LLM 并实时广播增量内容
+     *
+     * @param chatModel      LLM 模型
+     * @param prompt         完整 prompt
+     * @param conversationId 会话 ID，用于广播
+     * @param phase          阶段标识，用于日志（如 "reasoning"、"step_execution"）
+     * @return 聚合结果
+     */
+    public StreamResult streamCall(ChatModel chatModel, Prompt prompt,
+                                   String conversationId, String phase) {
+        return streamCallInternal(chatModel, prompt, conversationId, phase, true);
+    }
+
+    /**
+     * 流式调用 LLM 但不广播增量内容到前端。
+     * <p>
+     * 用于 PlanGenerationNode 等返回结构化 JSON 的节点 —— LLM 输出不应直接展示给用户，
+     * 需要后续解析后再决定是否广播。
+     *
+     * @param chatModel      LLM 模型
+     * @param prompt         完整 prompt
+     * @param conversationId 会话 ID（仅用于日志，不广播）
+     * @param phase          阶段标识
+     * @return 聚合结果
+     */
+    public StreamResult streamCallSilent(ChatModel chatModel, Prompt prompt,
+                                          String conversationId, String phase) {
+        return streamCallInternal(chatModel, prompt, conversationId, phase, false);
+    }
+
+    /**
+     * 广播文本内容到前端（用于 silent 调用后手动推送 direct_answer 等）
+     */
+    public void broadcastContent(String conversationId, String content) {
+        if (content != null && !content.isEmpty()) {
+            broadcastDelta(conversationId, "content_delta", content);
+        }
+    }
+
+    // ==================== 重试配置 ====================
+
+    private static final int MAX_RETRIES = 3;
+    private static final long BACKOFF_BASE_MS = 1000;
+    private static final long BACKOFF_CAP_MS = 10_000;
+
+    /**
+     * 判断错误是否可重试（基于状态码/异常类型）
+     */
+    private static boolean isRetryable(Throwable error) {
+        String msg = extractFullErrorChain(error);
+        // Kimi engine_overloaded / 标准 HTTP 错误 / 速率限制
+        return msg.contains("engine_overloaded")
+                || msg.contains("rate_limit") || msg.contains("RateLimitError")
+                || msg.contains("429") || msg.contains("Too Many Requests")
+                || msg.contains("500") || msg.contains("502") || msg.contains("503") || msg.contains("504")
+                || msg.contains("APITimeoutError") || msg.contains("APIConnectionError")
+                || msg.contains("Connection reset") || msg.contains("Connection refused");
+    }
+
+    /**
+     * 分类错误类型（用于分级重试和上层 Node 决策）
+     */
+    private static ErrorType classifyError(Throwable error) {
+        String msg = extractFullErrorChain(error);
+        // PTL: prompt too long / context length exceeded
+        if (msg.contains("prompt is too long")
+                || msg.contains("context_length_exceeded")
+                || msg.contains("context length exceeded")
+                || msg.contains("maximum context length")
+                || msg.contains("token limit")
+                || msg.contains("This model's maximum context length")
+                || msg.contains("请求体中的 input tokens 总数超出了模型允许")) {
+            return ErrorType.PROMPT_TOO_LONG;
+        }
+        // Auth errors
+        if (msg.contains("401") || msg.contains("Unauthorized") || msg.contains("Invalid API Key")
+                || msg.contains("authentication") || msg.contains("AuthenticationError")) {
+            return ErrorType.AUTH_ERROR;
+        }
+        // Rate limit
+        if (msg.contains("429") || msg.contains("rate_limit") || msg.contains("RateLimitError")
+                || msg.contains("Too Many Requests") || msg.contains("engine_overloaded")) {
+            return ErrorType.RATE_LIMIT;
+        }
+        // Server errors
+        if (msg.contains("500") || msg.contains("502") || msg.contains("503") || msg.contains("504")
+                || msg.contains("APITimeoutError") || msg.contains("APIConnectionError")
+                || msg.contains("Connection reset") || msg.contains("Connection refused")
+                || msg.contains("timeout") || msg.contains("Timeout")) {
+            return ErrorType.SERVER_ERROR;
+        }
+        return ErrorType.UNKNOWN;
+    }
+
+    /** 提取完整异常链信息用于关键字匹配 */
+    private static String extractFullErrorChain(Throwable error) {
+        StringBuilder sb = new StringBuilder();
+        Throwable cur = error;
+        while (cur != null) {
+            if (cur.getMessage() != null) {
+                sb.append(cur.getMessage()).append(" | ");
+            }
+            sb.append(cur.getClass().getSimpleName()).append(" | ");
+            cur = cur.getCause();
+        }
+        return sb.toString();
+    }
+
+    private StreamResult streamCallInternal(ChatModel chatModel, Prompt prompt,
+                                             String conversationId, String phase,
+                                             boolean broadcast) {
+        // 在开始 LLM 调用前检查停止标志
+        if (streamTracker.isStopRequested(conversationId)) {
+            log.info("[{}] Stop requested before LLM call, aborting: conversationId={}", phase, conversationId);
+            throw new CancellationException("Stream stopped by user");
+        }
+
+        // 主模型重试循环
+        StreamResult lastResult = null;
+        for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+            lastResult = doStreamCall(chatModel, prompt, conversationId, phase, broadcast, attempt);
+            if (lastResult != null) {
+                // PTL: 不重试，直接返回给上层 Node 处理
+                if (lastResult.errorType() == ErrorType.PROMPT_TOO_LONG) {
+                    return lastResult;
+                }
+                // AUTH: 不重试
+                if (lastResult.errorType() == ErrorType.AUTH_ERROR) {
+                    return lastResult;
+                }
+                // 成功或不可重试
+                if (lastResult.errorMessage() == null || lastResult.errorType() == ErrorType.NONE) {
+                    return lastResult;
+                }
+            }
+            // lastResult == null 表示需要重试
+        }
+
+        // 主模型耗尽重试 — 尝试 fallback model
+        if (fallbackModel != null && fallbackModel != chatModel) {
+            log.warn("[{}] Primary model exhausted retries, switching to fallback model for conversation {}",
+                    phase, conversationId);
+            if (broadcast) {
+                broadcastDelta(conversationId, "warning",
+                        buildDeltaJson("主模型不可用，正在切换到备选模型..."));
+            }
+            StreamResult fallbackResult = doStreamCall(fallbackModel, prompt, conversationId,
+                    phase + "_fallback", broadcast, 0);
+            if (fallbackResult != null) {
+                return fallbackResult;
+            }
+        }
+
+        return lastResult != null ? lastResult
+                : buildErrorResult("LLM 调用失败，已达最大重试次数", conversationId, phase);
+    }
+
+    /**
+     * 单次流式调用尝试。
+     * @return StreamResult 如果成功/降级/不可重试；null 如果应该重试
+     */
+    private StreamResult doStreamCall(ChatModel chatModel, Prompt prompt,
+                                       String conversationId, String phase,
+                                       boolean broadcast, int attempt) {
+        if (attempt > 0) {
+            long delay = Math.min(BACKOFF_BASE_MS * (1L << (attempt - 1)), BACKOFF_CAP_MS);
+            log.warn("[{}] Retry attempt {}/{} after {}ms for conversation {}",
+                    phase, attempt, MAX_RETRIES, delay, conversationId);
+            try {
+                Thread.sleep(delay);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return buildErrorResult("LLM 调用被中断", conversationId, phase);
+            }
+        }
+
+        StringBuilder contentAccum = new StringBuilder();
+        StringBuilder thinkingAccum = new StringBuilder();
+        List<ToolCallAccumulator> toolCallAccumulators = new ArrayList<>();
+        AtomicReference<AssistantMessage> lastAssistantMessage = new AtomicReference<>();
+        AtomicReference<Throwable> errorRef = new AtomicReference<>();
+        AtomicInteger promptTokens = new AtomicInteger(0);
+        AtomicInteger completionTokens = new AtomicInteger(0);
+
+        CountDownLatch latch = new CountDownLatch(1);
+
+        chatModel.stream(prompt)
+                .doOnNext(chatResponse -> {
+                    if (chatResponse == null || chatResponse.getResults() == null || chatResponse.getResults().isEmpty()) {
+                        return;
+                    }
+                    var generation = chatResponse.getResult();
+                    AssistantMessage msg = generation.getOutput();
+                    lastAssistantMessage.set(msg);
+
+                    // 1. 提取 content delta
+                    String contentDelta = msg.getText();
+                    if (contentDelta != null && !contentDelta.isEmpty()) {
+                        contentAccum.append(contentDelta);
+                        if (broadcast) {
+                            broadcastDelta(conversationId, "content_delta", contentDelta);
+                        }
+                    }
+
+                    // 2. 提取 thinking delta（从 properties 中的 reasoningContent）
+                    String thinkingDelta = extractReasoningContent(msg);
+                    if (thinkingDelta != null && !thinkingDelta.isEmpty()) {
+                        thinkingAccum.append(thinkingDelta);
+                        if (broadcast) {
+                            broadcastDelta(conversationId, "thinking_delta", thinkingDelta);
+                        }
+                    }
+
+                    // 3. 累积 tool calls（处理分片）
+                    if (msg.hasToolCalls()) {
+                        accumulateToolCalls(msg.getToolCalls(), toolCallAccumulators);
+                    }
+
+                    // 4. 提取 token usage（通常最后一个 chunk 携带完整 usage）
+                    if (chatResponse.getMetadata() != null && chatResponse.getMetadata().getUsage() != null) {
+                        var usage = chatResponse.getMetadata().getUsage();
+                        if (usage.getPromptTokens() != null && usage.getPromptTokens() > 0) {
+                            promptTokens.set(usage.getPromptTokens().intValue());
+                        }
+                        if (usage.getCompletionTokens() != null && usage.getCompletionTokens() > 0) {
+                            completionTokens.set(usage.getCompletionTokens().intValue());
+                        }
+                    }
+                })
+                .subscribe(
+                        chunk -> { /* 处理逻辑已在 doOnNext 中完成 */ },
+                        err -> { errorRef.set(err); latch.countDown(); },
+                        latch::countDown
+                );
+
+        // 阻塞等待流完成（节点本身是同步 NodeAction），每 500ms 检查一次停止标志
+        try {
+            long deadlineMs = System.currentTimeMillis() + TimeUnit.MINUTES.toMillis(10);
+            while (!latch.await(500, TimeUnit.MILLISECONDS)) {
+                if (streamTracker.isStopRequested(conversationId)) {
+                    // 不直接抛异常 — 先检查是否已有累积内容，有则返回 partial stopped result
+                    boolean hasContent = !contentAccum.isEmpty() || !thinkingAccum.isEmpty()
+                            || !toolCallAccumulators.isEmpty();
+                    if (hasContent) {
+                        log.info("[{}] Stop requested during LLM call with partial content " +
+                                        "(content={} chars, thinking={} chars, toolCalls={}), " +
+                                        "returning stopped partial result: conversationId={}",
+                                phase, contentAccum.length(), thinkingAccum.length(),
+                                toolCallAccumulators.size(), conversationId);
+                        return assembleStoppedResult(contentAccum, thinkingAccum, toolCallAccumulators,
+                                promptTokens.get(), completionTokens.get(), phase);
+                    }
+                    log.info("[{}] Stop requested during LLM call, no content accumulated, aborting: conversationId={}",
+                            phase, conversationId);
+                    throw new CancellationException("Stream stopped by user");
+                }
+                if (System.currentTimeMillis() > deadlineMs) {
+                    log.warn("[{}] Stream call timed out for conversation {}", phase, conversationId);
+                    return buildErrorResult("LLM 调用超时", conversationId, phase);
+                }
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return buildErrorResult("LLM 调用被中断", conversationId, phase);
+        }
+
+        Throwable error = errorRef.get();
+        if (error != null) {
+            boolean hasAccumulatedContent = !contentAccum.isEmpty() || !toolCallAccumulators.isEmpty();
+
+            if (hasAccumulatedContent) {
+                // ===== 优雅降级：LLM 已产出部分内容（如 engine_overloaded 在流尾部触发） =====
+                log.warn("[{}] Stream error after partial content ({} chars, {} tool calls), " +
+                                "using accumulated content as partial result: {}",
+                        phase, contentAccum.length(), toolCallAccumulators.size(), error.getMessage());
+                if (broadcast) {
+                    broadcastDelta(conversationId, "warning",
+                            buildDeltaJson("LLM 响应中断，使用已生成的部分内容继续"));
+                }
+                return assembleResult(contentAccum, thinkingAccum, toolCallAccumulators,
+                        promptTokens.get(), completionTokens.get(), phase, true, error.getMessage());
+            }
+
+            // ===== 无内容：分类错误并决定是否重试 =====
+            ErrorType errorType = classifyError(error);
+
+            // PTL: 不重试，返回给上层 Node 处理压缩
+            if (errorType == ErrorType.PROMPT_TOO_LONG) {
+                log.warn("[{}] Prompt too long error, returning to node for compaction: {}",
+                        phase, error.getMessage());
+                return buildErrorResultWithType("Prompt 过长: " + extractUserFriendlyError(error),
+                        conversationId, phase, errorType);
+            }
+
+            // Auth: 不重试
+            if (errorType == ErrorType.AUTH_ERROR) {
+                log.error("[{}] Authentication error, not retrying: {}", phase, error.getMessage());
+                return buildErrorResultWithType("认证失败: " + extractUserFriendlyError(error),
+                        conversationId, phase, errorType);
+            }
+
+            // Rate limit / Server error: 重试
+            if (attempt < MAX_RETRIES && (errorType == ErrorType.RATE_LIMIT || errorType == ErrorType.SERVER_ERROR)) {
+                log.warn("[{}] Retryable error (attempt {}/{}, type={}): {}",
+                        phase, attempt, MAX_RETRIES, errorType, error.getMessage());
+                return null;  // 返回 null 触发重试
+            }
+
+            // 不可重试或已耗尽重试
+            log.error("[{}] LLM call failed after {} attempts for conversation {}: {}",
+                    phase, attempt + 1, conversationId, error.getMessage());
+            return buildErrorResultWithType("LLM 调用失败: " + extractUserFriendlyError(error),
+                    conversationId, phase, errorType);
+        }
+
+        // ===== 成功 =====
+        return assembleResult(contentAccum, thinkingAccum, toolCallAccumulators,
+                promptTokens.get(), completionTokens.get(), phase, false, null);
+    }
+
+    /** 组装 stopped partial 结果（用户主动停止，有已累积内容） */
+    private StreamResult assembleStoppedResult(StringBuilder contentAccum, StringBuilder thinkingAccum,
+                                                List<ToolCallAccumulator> toolCallAccumulators,
+                                                int promptTok, int completionTok, String phase) {
+        List<AssistantMessage.ToolCall> finalToolCalls = buildFinalToolCalls(toolCallAccumulators);
+        String fullContent = contentAccum.toString();
+        String fullThinking = thinkingAccum.toString();
+
+        // Fallback: <think> 标签提取
+        if (fullThinking.isEmpty() && fullContent.contains("<think>")) {
+            var extracted = extractThinkTags(fullContent);
+            if (!extracted.thinking.isEmpty()) {
+                fullThinking = extracted.thinking;
+                fullContent = extracted.content;
+            }
+        }
+
+        AssistantMessage assembledMessage = !finalToolCalls.isEmpty()
+                ? AssistantMessage.builder().content(fullContent).toolCalls(finalToolCalls).build()
+                : new AssistantMessage(fullContent);
+
+        return new StreamResult(fullContent, fullThinking, assembledMessage,
+                finalToolCalls, !finalToolCalls.isEmpty(), promptTok, completionTok,
+                true, null, ErrorType.NONE, true);
+    }
+
+    /** 组装最终 StreamResult（成功或 partial） */
+    private StreamResult assembleResult(StringBuilder contentAccum, StringBuilder thinkingAccum,
+                                         List<ToolCallAccumulator> toolCallAccumulators,
+                                         int promptTok, int completionTok,
+                                         String phase, boolean partial, String errorMsg) {
+        List<AssistantMessage.ToolCall> finalToolCalls = buildFinalToolCalls(toolCallAccumulators);
+        String fullContent = contentAccum.toString();
+        String fullThinking = thinkingAccum.toString();
+
+        // Fallback: <think> 标签提取
+        if (fullThinking.isEmpty() && fullContent.contains("<think>")) {
+            var extracted = extractThinkTags(fullContent);
+            if (!extracted.thinking.isEmpty()) {
+                fullThinking = extracted.thinking;
+                fullContent = extracted.content;
+                log.debug("[{}] Extracted <think> tags from content: {} thinking chars, {} content chars",
+                        phase, fullThinking.length(), fullContent.length());
+            }
+        }
+
+        AssistantMessage assembledMessage;
+        if (!finalToolCalls.isEmpty()) {
+            assembledMessage = AssistantMessage.builder()
+                    .content(fullContent)
+                    .toolCalls(finalToolCalls)
+                    .build();
+        } else {
+            assembledMessage = new AssistantMessage(fullContent);
+        }
+
+        return new StreamResult(fullContent, fullThinking, assembledMessage,
+                finalToolCalls, !finalToolCalls.isEmpty(), promptTok, completionTok,
+                partial, errorMsg, ErrorType.NONE);
+    }
+
+    /** 构建纯错误 StreamResult（无任何内容） */
+    private StreamResult buildErrorResult(String errorMsg, String conversationId, String phase) {
+        log.error("[{}] Building error result for conversation {}: {}", phase, conversationId, errorMsg);
+        if (streamTracker != null && conversationId != null) {
+            broadcastDelta(conversationId, "warning",
+                    buildDeltaJson(errorMsg));
+        }
+        AssistantMessage errorMessage = new AssistantMessage("[错误] " + errorMsg);
+        return new StreamResult("[错误] " + errorMsg, "", errorMessage,
+                List.of(), false, 0, 0, false, errorMsg, ErrorType.UNKNOWN);
+    }
+
+    /** 构建带错误类型的 StreamResult */
+    private StreamResult buildErrorResultWithType(String errorMsg, String conversationId,
+                                                    String phase, ErrorType errorType) {
+        log.error("[{}] Building typed error result for conversation {}: {} (type={})",
+                phase, conversationId, errorMsg, errorType);
+        if (streamTracker != null && conversationId != null) {
+            broadcastDelta(conversationId, "warning", buildDeltaJson(errorMsg));
+            // 广播结构化 error 事件，供前端展示错误卡片
+            String errorJson = buildErrorEventJson(errorMsg, conversationId, errorType);
+            streamTracker.broadcast(conversationId, "error", errorJson);
+        }
+        AssistantMessage errorMessage = new AssistantMessage("[错误] " + errorMsg);
+        return new StreamResult("[错误] " + errorMsg, "", errorMessage,
+                List.of(), false, 0, 0, false, errorMsg, errorType);
+    }
+
+    /** 构建 error 事件的 JSON payload */
+    private static String buildErrorEventJson(String message, String conversationId, ErrorType errorType) {
+        StringBuilder sb = new StringBuilder("{");
+        sb.append("\"message\":\"");
+        appendJsonEscaped(sb, message);
+        sb.append("\",\"conversationId\":\"");
+        appendJsonEscaped(sb, conversationId);
+        sb.append("\",\"errorType\":\"");
+        sb.append(errorType.name());
+        sb.append("\"}");
+        return sb.toString();
+    }
+
+    /** JSON 字符串转义辅助 */
+    private static void appendJsonEscaped(StringBuilder sb, String value) {
+        if (value == null) return;
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (c == '"') sb.append("\\\"");
+            else if (c == '\\') sb.append("\\\\");
+            else if (c == '\n') sb.append("\\n");
+            else if (c == '\t') sb.append("\\t");
+            else if (c == '\r') sb.append("\\r");
+            else sb.append(c);
+        }
+    }
+
+    /** 从异常链提取用户友好的错误信息 */
+    private static String extractUserFriendlyError(Throwable error) {
+        String msg = error.getMessage();
+        if (msg == null) return error.getClass().getSimpleName();
+        // 对 Jackson 反序列化错误，提取关键信息
+        if (msg.contains("engine_overloaded")) return "模型服务过载，请稍后重试";
+        if (msg.contains("rate_limit") || msg.contains("429")) return "请求频率过高，请稍后重试";
+        if (msg.contains("timeout") || msg.contains("Timeout")) return "请求超时，请重试";
+        if (msg.contains("502") || msg.contains("503") || msg.contains("504")) return "模型服务暂时不可用";
+        // 截断过长的原始消息
+        return msg.length() > 100 ? msg.substring(0, 100) + "..." : msg;
+    }
+
+    /**
+     * LLM 调用错误类型分类
+     */
+    public enum ErrorType {
+        /** 无错误 */
+        NONE,
+        /** 速率限制 (429) */
+        RATE_LIMIT,
+        /** 服务端错误 (5xx, timeout) */
+        SERVER_ERROR,
+        /** Prompt 过长 (context length exceeded) */
+        PROMPT_TOO_LONG,
+        /** 认证错误 */
+        AUTH_ERROR,
+        /** 其他未知错误 */
+        UNKNOWN
+    }
+
+    /**
+     * 流式调用结果
+     */
+    public record StreamResult(
+            /** 完整内容文本 */
+            String text,
+            /** 完整 thinking 文本 */
+            String thinking,
+            /** 重建的完整 AssistantMessage（含 toolCalls） */
+            AssistantMessage assistantMessage,
+            /** 完整工具调用列表 */
+            List<AssistantMessage.ToolCall> toolCalls,
+            /** 是否包含工具调用 */
+            boolean hasToolCalls,
+            /** 本次调用消耗的 prompt tokens */
+            int promptTokens,
+            /** 本次调用消耗的 completion tokens */
+            int completionTokens,
+            /** 结果是否不完整（LLM 中途断开但已有部分内容） */
+            boolean partial,
+            /** 错误信息（非空表示调用失败，但可能仍有 partial 内容可用） */
+            String errorMessage,
+            /** 错误类型分类 */
+            ErrorType errorType,
+            /** 用户主动停止（stopRequested）导致的提前返回 */
+            boolean stopped
+    ) {
+        /** 兼容旧调用方 — 无 partial/error/stopped 的正常结果 */
+        public StreamResult(String text, String thinking, AssistantMessage assistantMessage,
+                            List<AssistantMessage.ToolCall> toolCalls, boolean hasToolCalls,
+                            int promptTokens, int completionTokens) {
+            this(text, thinking, assistantMessage, toolCalls, hasToolCalls,
+                    promptTokens, completionTokens, false, null, ErrorType.NONE, false);
+        }
+
+        /** 兼容 10-arg 调用点 */
+        public StreamResult(String text, String thinking, AssistantMessage assistantMessage,
+                            List<AssistantMessage.ToolCall> toolCalls, boolean hasToolCalls,
+                            int promptTokens, int completionTokens,
+                            boolean partial, String errorMessage, ErrorType errorType) {
+            this(text, thinking, assistantMessage, toolCalls, hasToolCalls,
+                    promptTokens, completionTokens, partial, errorMessage, errorType, false);
+        }
+
+        /** 是否有不可忽略的错误（无内容 + 有错误） */
+        public boolean hasFatalError() {
+            return errorMessage != null && (text == null || text.isBlank()) && !hasToolCalls;
+        }
+
+        /** 是否为 Prompt 过长错误 */
+        public boolean isPromptTooLong() {
+            return errorType == ErrorType.PROMPT_TOO_LONG;
+        }
+
+        /** 是否有任何可保存的内容（text/thinking/toolCalls） */
+        public boolean hasAnyContent() {
+            return (text != null && !text.isBlank())
+                    || (thinking != null && !thinking.isBlank())
+                    || hasToolCalls;
+        }
+    }
+
+    // ==================== 内部方法 ====================
+
+    /**
+     * 从 AssistantMessage 的 properties 中提取 reasoningContent
+     * <p>
+     * Spring AI 1.1.3 的 OpenAiChatModel 在流式路径中会将 delta.reasoning_content
+     * 放入 properties 的 "reasoningContent" key。
+     */
+    private String extractReasoningContent(AssistantMessage msg) {
+        Map<String, Object> metadata = msg.getMetadata();
+        if (metadata == null) {
+            return null;
+        }
+        Object rc = metadata.get("reasoningContent");
+        if (rc instanceof String s && !s.isEmpty()) {
+            return s;
+        }
+        return null;
+    }
+
+    /**
+     * 广播 delta 事件（content_delta / thinking_delta）
+     */
+    private void broadcastDelta(String conversationId, String eventName, String delta) {
+        if (streamTracker == null || conversationId == null || conversationId.isEmpty()) {
+            return;
+        }
+        // 手动构建 JSON 避免序列化开销，格式与 ChatController.broadcastEvent 一致
+        String json = buildDeltaJson(delta);
+        streamTracker.broadcast(conversationId, eventName, json);
+    }
+
+    /**
+     * 构建 {"delta":"..."} JSON
+     */
+    private static String buildDeltaJson(String delta) {
+        StringBuilder sb = new StringBuilder("{\"delta\":\"");
+        for (int k = 0; k < delta.length(); k++) {
+            char c = delta.charAt(k);
+            if (c == '"') sb.append("\\\"");
+            else if (c == '\\') sb.append("\\\\");
+            else if (c == '\n') sb.append("\\n");
+            else if (c == '\t') sb.append("\\t");
+            else if (c == '\r') sb.append("\\r");
+            else sb.append(c);
+        }
+        sb.append("\"}");
+        return sb.toString();
+    }
+
+    /**
+     * 累积 tool call 分片。
+     * <p>
+     * 流式模式下 tool calls 可能分多个 chunk 到来：
+     * - 第一个 chunk 携带 id、name 和部分 arguments
+     * - 后续 chunk 只有 arguments 增量
+     * <p>
+     * 采用增量累积方式合并分片 tool_call。
+     */
+    private void accumulateToolCalls(List<AssistantMessage.ToolCall> chunkToolCalls,
+                                     List<ToolCallAccumulator> accumulators) {
+        for (AssistantMessage.ToolCall tc : chunkToolCalls) {
+            if (tc.id() != null && !tc.id().isEmpty()) {
+                // 新的 tool call 或完整 tool call
+                ToolCallAccumulator existing = findAccumulator(accumulators, tc.id());
+                if (existing != null) {
+                    // 追加 arguments
+                    if (tc.arguments() != null) {
+                        existing.arguments.append(tc.arguments());
+                    }
+                } else {
+                    ToolCallAccumulator acc = new ToolCallAccumulator();
+                    acc.id = tc.id();
+                    acc.type = tc.type();
+                    acc.name = tc.name();
+                    acc.arguments = new StringBuilder(tc.arguments() != null ? tc.arguments() : "");
+                    accumulators.add(acc);
+                }
+            } else if (!accumulators.isEmpty()) {
+                // 无 id 的 chunk，追加到最后一个 accumulator 的 arguments
+                ToolCallAccumulator last = accumulators.get(accumulators.size() - 1);
+                if (tc.arguments() != null) {
+                    last.arguments.append(tc.arguments());
+                }
+                if (tc.name() != null && !tc.name().isEmpty() && (last.name == null || last.name.isEmpty())) {
+                    last.name = tc.name();
+                }
+            }
+        }
+    }
+
+    private ToolCallAccumulator findAccumulator(List<ToolCallAccumulator> accumulators, String id) {
+        for (ToolCallAccumulator acc : accumulators) {
+            if (id.equals(acc.id)) {
+                return acc;
+            }
+        }
+        return null;
+    }
+
+    private List<AssistantMessage.ToolCall> buildFinalToolCalls(List<ToolCallAccumulator> accumulators) {
+        if (accumulators.isEmpty()) {
+            return List.of();
+        }
+        List<AssistantMessage.ToolCall> result = new ArrayList<>();
+        for (ToolCallAccumulator acc : accumulators) {
+            result.add(new AssistantMessage.ToolCall(
+                    acc.id,
+                    acc.type != null ? acc.type : "function",
+                    acc.name,
+                    acc.arguments.toString()));
+        }
+        return result;
+    }
+
+    private static class ToolCallAccumulator {
+        String id;
+        String type;
+        String name;
+        StringBuilder arguments = new StringBuilder();
+    }
+
+    // ==================== <think> 标签 fallback 解析 ====================
+
+    private record ThinkExtracted(String thinking, String content) {}
+
+    /**
+     * 从内容中提取 &lt;think&gt;...&lt;/think&gt; 标签内的文本作为 thinking。
+     * 仅作为 fallback，当模型不支持结构化 reasoningContent 时使用。
+     */
+    private static ThinkExtracted extractThinkTags(String content) {
+        StringBuilder thinking = new StringBuilder();
+        StringBuilder cleaned = new StringBuilder();
+        int i = 0;
+        while (i < content.length()) {
+            int tagStart = content.indexOf("<think>", i);
+            if (tagStart < 0) {
+                cleaned.append(content, i, content.length());
+                break;
+            }
+            cleaned.append(content, i, tagStart);
+            int tagEnd = content.indexOf("</think>", tagStart);
+            if (tagEnd < 0) {
+                // 未闭合的 <think> 标签，将剩余部分视为 thinking
+                thinking.append(content, tagStart + 7, content.length());
+                break;
+            }
+            thinking.append(content, tagStart + 7, tagEnd);
+            i = tagEnd + 8;
+        }
+        return new ThinkExtracted(thinking.toString().trim(), cleaned.toString().trim());
+    }
+}

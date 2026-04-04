@@ -1,0 +1,684 @@
+package vip.mate.channel;
+
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
+import reactor.core.publisher.Flux;
+import vip.mate.agent.AgentService;
+import vip.mate.approval.ApprovalService;
+import vip.mate.approval.PendingApproval;
+import vip.mate.channel.model.ChannelEntity;
+import vip.mate.channel.notification.ApprovalNotificationService;
+import vip.mate.channel.service.ChannelService;
+import org.springframework.context.ApplicationEventPublisher;
+import vip.mate.memory.event.ConversationCompletedEvent;
+import vip.mate.workspace.conversation.ConversationService;
+import vip.mate.workspace.conversation.model.MessageContentPart;
+
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.*;
+import java.util.concurrent.locks.ReentrantLock;
+
+/**
+ * 渠道消息路由器
+ * <p>
+ * 采用每渠道独立队列架构：
+ * - 每渠道一个 BlockingQueue，N 个消费线程从队列取消息处理
+ * - 会话级锁保证同一 conversationId 串行处理
+ * - 500ms 防抖：同一会话的连续消息合并为一条
+ * - Web 渠道不走队列（有自己的 SSE 流程）
+ *
+ * @author MateClaw Team
+ */
+@Slf4j
+@Component
+public class ChannelMessageRouter {
+
+    private final AgentService agentService;
+    private final ConversationService conversationService;
+    private final ChannelService channelService;
+    private final ChannelSessionStore channelSessionStore;
+    private final ApprovalService approvalService;
+    private final ApprovalNotificationService approvalNotificationService;
+    private final ApplicationEventPublisher eventPublisher;
+
+    /** 队列条目：封装消息及其路由上下文 */
+    private record QueueEntry(ChannelMessage message, ChannelAdapter adapter, ChannelEntity channelEntity) {}
+
+    /** 每个渠道类型的消息队列 */
+    private final ConcurrentHashMap<String, LinkedBlockingQueue<QueueEntry>> channelQueues = new ConcurrentHashMap<>();
+
+    /** 每个渠道类型的消费线程池 */
+    private final ConcurrentHashMap<String, ExecutorService> channelExecutors = new ConcurrentHashMap<>();
+
+    /** 会话级别的锁：保证同一 conversationId 串行处理 */
+    private final ConcurrentHashMap<String, ReentrantLock> sessionLocks = new ConcurrentHashMap<>();
+
+    /** 防抖调度器 */
+    private final ScheduledExecutorService debounceScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "channel-debounce-scheduler");
+        t.setDaemon(true);
+        return t;
+    });
+
+    /** 防抖缓冲区：conversationId -> 待合并消息 */
+    private final ConcurrentHashMap<String, PendingMessage> pendingMessages = new ConcurrentHashMap<>();
+
+    /** 每个渠道的消费线程数 */
+    private static final int CONSUMERS_PER_CHANNEL = 4;
+
+    /** 每个渠道的队列容量 */
+    private static final int QUEUE_CAPACITY = 1000;
+
+    /** 防抖等待时间（毫秒） */
+    private static final long DEBOUNCE_MS = 500;
+
+    /** 是否已关闭 */
+    private volatile boolean shutdown = false;
+
+    public ChannelMessageRouter(AgentService agentService,
+                                ConversationService conversationService,
+                                ChannelService channelService,
+                                ChannelSessionStore channelSessionStore,
+                                ApprovalService approvalService,
+                                ApprovalNotificationService approvalNotificationService,
+                                ApplicationEventPublisher eventPublisher) {
+        this.agentService = agentService;
+        this.conversationService = conversationService;
+        this.channelService = channelService;
+        this.channelSessionStore = channelSessionStore;
+        this.approvalService = approvalService;
+        this.approvalNotificationService = approvalNotificationService;
+        this.eventPublisher = eventPublisher;
+    }
+
+    // ==================== 防抖辅助类 ====================
+
+    /**
+     * 防抖待合并消息
+     */
+    private static class PendingMessage {
+        final ChannelAdapter adapter;
+        final ChannelEntity channelEntity;
+        final ChannelMessage firstMessage;
+        final StringBuilder mergedContent;
+        volatile ScheduledFuture<?> timer;
+
+        PendingMessage(ChannelMessage message, ChannelAdapter adapter, ChannelEntity channelEntity) {
+            this.firstMessage = message;
+            this.adapter = adapter;
+            this.channelEntity = channelEntity;
+            this.mergedContent = new StringBuilder(message.getContent() != null ? message.getContent() : "");
+        }
+
+        synchronized void appendContent(String content) {
+            if (content != null && !content.isBlank()) {
+                if (!mergedContent.isEmpty()) {
+                    mergedContent.append('\n');
+                }
+                mergedContent.append(content);
+            }
+        }
+
+        synchronized String getMergedContent() {
+            return mergedContent.toString();
+        }
+    }
+
+    // ==================== 入队（替代原 route 方法） ====================
+
+    /**
+     * 将渠道消息入队到对应渠道的处理队列（防抖后入队）。
+     * <p>
+     * Webhook 调用此方法后立即返回，不阻塞。
+     *
+     * @param message       入站消息
+     * @param adapter       来源渠道适配器（用于回复）
+     * @param channelEntity 渠道配置（含关联 agentId）
+     */
+    public void enqueue(ChannelMessage message, ChannelAdapter adapter, ChannelEntity channelEntity) {
+        Long agentId = channelEntity.getAgentId();
+        if (agentId == null) {
+            log.warn("Channel {} has no associated agent, ignoring message from {}",
+                    channelEntity.getName(), message.getSenderId());
+            return;
+        }
+
+        if (shutdown) {
+            log.warn("Router is shutting down, rejecting message from {}", message.getSenderId());
+            return;
+        }
+
+        String channelType = adapter.getChannelType();
+        String conversationId = buildConversationId(message);
+
+        log.info("[{}] Enqueuing message: sender={}, conversationId={}, agentId={}",
+                channelType, message.getSenderId(), conversationId, agentId);
+
+        // 防抖：同一会话 500ms 内的连续消息合并
+        synchronized (pendingMessages) {
+            PendingMessage existing = pendingMessages.get(conversationId);
+            if (existing != null) {
+                // 合并到已有的 pending 消息
+                if (existing.timer != null) {
+                    existing.timer.cancel(false);
+                }
+                existing.appendContent(message.getContent());
+                existing.timer = debounceScheduler.schedule(
+                        () -> flushPending(conversationId), DEBOUNCE_MS, TimeUnit.MILLISECONDS);
+                log.debug("[{}] Message merged with pending (debounce): conversationId={}",
+                        channelType, conversationId);
+                return;
+            }
+
+            // 首条消息，创建 PendingMessage 并设定防抖定时器
+            PendingMessage pending = new PendingMessage(message, adapter, channelEntity);
+            pendingMessages.put(conversationId, pending);
+            pending.timer = debounceScheduler.schedule(
+                    () -> flushPending(conversationId), DEBOUNCE_MS, TimeUnit.MILLISECONDS);
+        }
+    }
+
+    /**
+     * 防抖到期：将合并后的消息真正放入渠道队列
+     */
+    private void flushPending(String conversationId) {
+        PendingMessage pending;
+        synchronized (pendingMessages) {
+            pending = pendingMessages.remove(conversationId);
+        }
+        if (pending == null) return;
+
+        // 更新消息内容为合并后的文本
+        pending.firstMessage.setContent(pending.getMergedContent());
+
+        String channelType = pending.adapter.getChannelType();
+        LinkedBlockingQueue<QueueEntry> queue = channelQueues.computeIfAbsent(channelType, this::createChannelQueue);
+
+        boolean offered = queue.offer(new QueueEntry(pending.firstMessage, pending.adapter, pending.channelEntity));
+        if (!offered) {
+            log.error("[{}] Message queue full (capacity={}), dropping message from {}",
+                    channelType, QUEUE_CAPACITY, pending.firstMessage.getSenderId());
+            try {
+                String replyTarget = resolveReplyTarget(pending.firstMessage);
+                pending.adapter.sendMessage(replyTarget, "系统繁忙，请稍后再试");
+            } catch (Exception e) {
+                log.error("[{}] Failed to send busy message: {}", channelType, e.getMessage());
+            }
+        } else {
+            log.debug("[{}] Message flushed to queue: conversationId={}, queueSize={}",
+                    channelType, conversationId, queue.size());
+        }
+    }
+
+    // ==================== 消费线程 ====================
+
+    /**
+     * 为渠道类型创建队列并启动消费线程
+     */
+    private LinkedBlockingQueue<QueueEntry> createChannelQueue(String channelType) {
+        LinkedBlockingQueue<QueueEntry> queue = new LinkedBlockingQueue<>(QUEUE_CAPACITY);
+
+        ExecutorService executor = Executors.newFixedThreadPool(CONSUMERS_PER_CHANNEL, new ThreadFactory() {
+            private int counter = 0;
+            @Override
+            public Thread newThread(Runnable r) {
+                Thread t = new Thread(r, "channel-consumer-" + channelType + "-" + (counter++));
+                t.setDaemon(true);
+                return t;
+            }
+        });
+
+        for (int i = 0; i < CONSUMERS_PER_CHANNEL; i++) {
+            executor.execute(() -> consumeLoop(channelType, queue));
+        }
+
+        channelExecutors.put(channelType, executor);
+        log.info("[{}] Created message queue (capacity={}) with {} consumer threads",
+                channelType, QUEUE_CAPACITY, CONSUMERS_PER_CHANNEL);
+        return queue;
+    }
+
+    /**
+     * 消费线程循环：从队列取消息，加会话锁后串行处理
+     */
+    private void consumeLoop(String channelType, LinkedBlockingQueue<QueueEntry> queue) {
+        log.info("[{}] Consumer thread started: {}", channelType, Thread.currentThread().getName());
+        while (!shutdown) {
+            try {
+                QueueEntry entry = queue.poll(1, TimeUnit.SECONDS);
+                if (entry == null) {
+                    continue; // 超时，重新检查 shutdown 标志
+                }
+
+                String conversationId = buildConversationId(entry.message());
+                ReentrantLock lock = sessionLocks.computeIfAbsent(conversationId, k -> new ReentrantLock());
+
+                lock.lock();
+                try {
+                    processMessage(entry.message(), entry.adapter(), entry.channelEntity(), conversationId);
+                } finally {
+                    lock.unlock();
+                }
+
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            } catch (Exception e) {
+                log.error("[{}] Unexpected error in consumer loop: {}", channelType, e.getMessage(), e);
+            }
+        }
+        log.info("[{}] Consumer thread stopped: {}", channelType, Thread.currentThread().getName());
+    }
+
+    // ==================== 审批命令识别 ====================
+
+    private static final java.util.Set<String> APPROVE_COMMANDS = java.util.Set.of(
+            "approve", "/approve", "批准", "/批准");
+    private static final java.util.Set<String> DENY_COMMANDS = java.util.Set.of(
+            "deny", "/deny", "拒绝", "/拒绝");
+    /** 带 pendingId 的审批命令格式：/approve a1b2c3 */
+    private static final java.util.regex.Pattern APPROVE_WITH_ID =
+            java.util.regex.Pattern.compile("^/?(approve|批准)\\s+([a-f0-9]{6,16})$",
+                    java.util.regex.Pattern.CASE_INSENSITIVE);
+    private static final java.util.regex.Pattern DENY_WITH_ID =
+            java.util.regex.Pattern.compile("^/?(deny|拒绝)\\s+([a-f0-9]{6,16})$",
+                    java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    private boolean isApproveCommand(String text) {
+        String t = text.toLowerCase().strip();
+        return APPROVE_COMMANDS.contains(t) || APPROVE_WITH_ID.matcher(t).matches();
+    }
+
+    private boolean isDenyCommand(String text) {
+        String t = text.toLowerCase().strip();
+        return DENY_COMMANDS.contains(t) || DENY_WITH_ID.matcher(t).matches();
+    }
+
+    /**
+     * 从审批命令中提取 shortId（如 "/approve a1b2c3" → "a1b2c3"），无 id 则返回 null
+     */
+    private String extractShortId(String text) {
+        java.util.regex.Matcher m = APPROVE_WITH_ID.matcher(text.strip());
+        if (m.matches()) return m.group(2);
+        m = DENY_WITH_ID.matcher(text.strip());
+        if (m.matches()) return m.group(2);
+        return null;
+    }
+
+    // ==================== 消息处理（原 route 逻辑 + 审批拦截层） ====================
+
+    /**
+     * 处理单条消息：保存 -> 调用 Agent -> 保存回复 -> 发送回复
+     * <p>
+     * 当钉钉渠道启用 AI Card 时，走流式卡片路径。
+     */
+    private void processMessage(ChannelMessage message, ChannelAdapter adapter,
+                                ChannelEntity channelEntity, String conversationId) {
+        Long agentId = channelEntity.getAgentId();
+        log.info("[{}] Processing message: sender={}, conversationId={}, agentId={}",
+                adapter.getChannelType(), message.getSenderId(), conversationId, agentId);
+
+        try {
+            // ======= 审批拦截层 =======
+            String userText = message.getContent() != null ? message.getContent().trim() : "";
+            PendingApproval pending = approvalService.findPendingByConversation(conversationId);
+
+            if (pending != null) {
+                String replyTarget = resolveReplyTarget(message);
+
+                if (isApproveCommand(userText)) {
+                    // pendingId 校验：如果命令包含 shortId，验证是否匹配当前 pending
+                    String shortId = extractShortId(userText);
+                    if (shortId != null && !pending.getPendingId().startsWith(shortId)) {
+                        adapter.sendMessage(replyTarget, "⚠️ 审批ID不匹配。当前待审批: "
+                                + pending.getPendingId().substring(0, Math.min(6, pending.getPendingId().length())));
+                        return;
+                    }
+                    // 身份校验：只有原始请求者可以审批（群聊安全）
+                    String originalRequester = pending.getUserId();
+                    if (originalRequester != null && !"system".equals(originalRequester)
+                            && !originalRequester.equals(message.getSenderId())) {
+                        adapter.sendMessage(replyTarget, "⚠️ 只有原始请求者可以审批此操作。");
+                        log.warn("[{}] Approval rejected: sender={} != requester={}",
+                                adapter.getChannelType(), message.getSenderId(), originalRequester);
+                        return;
+                    }
+                    // 批准：原子解决+消费审批记录（消除 resolve/consume race condition）
+                    PendingApproval consumed = approvalService.resolveAndConsume(
+                            pending.getPendingId(), message.getSenderId());
+                    if (consumed == null) {
+                        adapter.sendMessage(replyTarget, "⚠️ 审批记录已过期或已被处理。");
+                        return;
+                    }
+                    log.info("[{}] Approval APPROVED via IM command: pendingId={}, tool={}",
+                            adapter.getChannelType(), consumed.getPendingId(), consumed.getToolName());
+
+                    replayApprovedToolCall(consumed, conversationId, adapter, message, channelEntity);
+                    return;
+
+                } else if (isDenyCommand(userText)) {
+                    // 拒绝 + 清理 DB 残留审批占位消息
+                    approvalService.resolve(pending.getPendingId(), message.getSenderId(), "denied");
+                    conversationService.removeApprovalPlaceholders(conversationId);
+                    adapter.sendMessage(replyTarget, "⛔ 已拒绝执行工具: " + pending.getToolName());
+                    log.info("[{}] Approval DENIED via IM command: pendingId={}, tool={}",
+                            adapter.getChannelType(), pending.getPendingId(), pending.getToolName());
+                    return;
+
+                } else {
+                    // 非审批命令但有 pending → 视为隐式拒绝 + 清理残留
+                    approvalService.resolve(pending.getPendingId(), message.getSenderId(), "denied");
+                    conversationService.removeApprovalPlaceholders(conversationId);
+                    adapter.sendMessage(replyTarget, "⛔ 审批已取消。将继续处理您的新消息。");
+                    log.info("[{}] Approval auto-cancelled (non-approval message): pendingId={}",
+                            adapter.getChannelType(), pending.getPendingId());
+                    // 继续正常流程处理当前消息
+                }
+            }
+            // ======= 审批拦截层结束 =======
+
+            // 确保会话存在
+            conversationService.getOrCreateSharedConversation(conversationId, agentId);
+
+            // 更新渠道会话存储（用于主动推送）
+            String replyTarget = resolveReplyTarget(message);
+            if (replyTarget != null) {
+                channelSessionStore.saveOrUpdate(
+                        conversationId,
+                        adapter.getChannelType(),
+                        replyTarget,
+                        message.getSenderId(),
+                        message.getSenderName(),
+                        channelEntity.getId()
+                );
+            } else {
+                log.warn("[{}] No reply target resolved for sender={}, skipping session store update",
+                        adapter.getChannelType(), message.getSenderId());
+            }
+
+            // 保存用户消息（带 contentParts）
+            List<MessageContentPart> parts = message.getContentParts();
+            conversationService.saveMessage(conversationId, "user", message.getContent(), parts);
+
+            // 构建 prompt
+            String promptText = buildPromptFromParts(message.getContent(), parts);
+
+            // 流式路径：渠道实现了 StreamingChannelAdapter 则委托渠道渲染流式事件
+            if (adapter instanceof StreamingChannelAdapter streamingAdapter) {
+                processWithStreaming(message, streamingAdapter, conversationId, agentId, promptText);
+            } else {
+                // 同步路径：直接获取完整回复
+                String reply = agentService.chat(agentId, promptText, conversationId);
+
+                // 检查 chat 过程中是否产生了审批 pending
+                PendingApproval newPending = approvalService.findPendingByConversation(conversationId);
+                if (newPending != null) {
+                    // 有审批需求：不保存 LLM 的审批占位回复到 DB，直接从 pending 元数据构建通知
+                    String approvalNotice = buildApprovalNotice(newPending);
+                    adapter.renderAndSend(replyTarget, approvalNotice);
+                    log.info("[{}] Approval triggered during chat, sent notice (NOT saved to DB): tool={}",
+                            adapter.getChannelType(), newPending.getToolName());
+                } else {
+                    // 正常回复：保存并发送
+                    conversationService.saveMessage(conversationId, "assistant", reply);
+                    publishConversationCompletedEvent(agentId, conversationId, message.getContent(), reply);
+                    adapter.renderAndSend(replyTarget, reply);
+                    log.info("[{}] Reply sent to {}: {}chars",
+                            adapter.getChannelType(), replyTarget, reply.length());
+                }
+            }
+
+        } catch (Exception e) {
+            log.error("[{}] Failed to process message from {}: {}",
+                    adapter.getChannelType(), message.getSenderId(), e.getMessage(), e);
+
+            // 尝试发送错误提示
+            try {
+                String errorTarget = resolveReplyTarget(message);
+                adapter.sendMessage(errorTarget, "抱歉，处理消息时出现错误：" + e.getMessage());
+            } catch (Exception sendErr) {
+                log.error("[{}] Failed to send error message: {}",
+                        adapter.getChannelType(), sendErr.getMessage());
+            }
+        }
+    }
+
+    /**
+     * 流式处理路径（渠道无关）
+     * <p>
+     * 事件流与渲染分离：
+     * - Router 负责产生 StreamDelta 流（调用 AgentService）
+     * - StreamingChannelAdapter 负责渲染（AI Card / 卡片更新 / 文本累积等）
+     * - Router 负责后续的审批检查、消息持久化、事件发布
+     */
+    private void processWithStreaming(ChannelMessage message, StreamingChannelAdapter streamingAdapter,
+                                      String conversationId, Long agentId, String promptText) {
+        String channelType = streamingAdapter.getChannelType();
+        log.info("[{}] Streaming processing started: conversationId={}", channelType, conversationId);
+
+        try {
+            // Step 1: 产生事件流
+            Flux<AgentService.StreamDelta> stream = agentService.chatStructuredStream(
+                    agentId, promptText, conversationId, message.getSenderId());
+
+            // Step 2: 委托渠道渲染（渠道内部消费 Flux 并处理 UI 更新）
+            String finalContent = streamingAdapter.processStream(stream, message, conversationId);
+
+            // Step 3: 审批检查 + 持久化（渠道无关逻辑，由 Router 统一处理）
+            PendingApproval newPending = approvalService.findPendingByConversation(conversationId);
+            if (newPending != null) {
+                String replyTarget = resolveReplyTarget(message);
+                streamingAdapter.sendMessage(replyTarget, buildApprovalNotice(newPending));
+                log.info("[{}] Approval triggered during streaming (NOT saved to DB): tool={}",
+                        channelType, newPending.getToolName());
+            } else if (finalContent != null && !finalContent.isBlank()) {
+                conversationService.saveMessage(conversationId, "assistant", finalContent);
+                publishConversationCompletedEvent(agentId, conversationId, promptText, finalContent);
+                log.info("[{}] Streaming completed: contentLen={}", channelType, finalContent.length());
+            }
+
+        } catch (Exception e) {
+            log.error("[{}] Streaming processing failed: {}", channelType, e.getMessage(), e);
+            // 尝试发送错误提示
+            try {
+                String errorTarget = resolveReplyTarget(message);
+                streamingAdapter.sendMessage(errorTarget, "抱歉，流式处理失败：" + e.getMessage());
+            } catch (Exception sendErr) {
+                log.error("[{}] Failed to send streaming error message: {}", channelType, sendErr.getMessage());
+            }
+        }
+    }
+
+    // ==================== 审批重放 ====================
+
+    /**
+     * 重放被审批阻塞的工具调用
+     * <p>
+     * 接收已消费的审批记录（由 resolveAndConsume 原子获取），通过 AgentService.chatWithReplay 重新执行工具。
+     * 重放前清理 DB 中的审批占位消息，防止 LLM 看到残留文本后重新发起工具调用（死循环根因）。
+     */
+    private void replayApprovedToolCall(PendingApproval consumed, String conversationId,
+                                         ChannelAdapter adapter, ChannelMessage triggerMessage,
+                                         ChannelEntity channelEntity) {
+        String replyTarget = resolveReplyTarget(triggerMessage);
+        Long agentId = channelEntity.getAgentId();
+
+        // 通知用户审批已通过
+        adapter.sendMessage(replyTarget, "✅ 已批准执行工具: " + consumed.getToolName());
+
+        // 清理 DB 中残留的审批占位消息
+        conversationService.removeApprovalPlaceholders(conversationId);
+
+        // 简化 replay prompt（不重复工具名，防止 LLM 误解）
+        String replayPrompt = "继续执行已批准的工具调用。";
+
+        try {
+            String reply = agentService.chatWithReplay(
+                    agentId, replayPrompt, conversationId, consumed.getToolCallPayload());
+
+            // 保存 replay 结果（这是正常结果，入库）
+            conversationService.saveMessage(conversationId, "assistant", reply);
+
+            // 发送回复
+            adapter.renderAndSend(replyTarget, reply);
+
+            log.info("[{}] Replay completed: tool={}, replyLen={}",
+                    adapter.getChannelType(), consumed.getToolName(), reply.length());
+        } catch (Exception e) {
+            log.error("[approval-replay] Replay failed: {}", e.getMessage(), e);
+            adapter.sendMessage(replyTarget, "❌ 工具执行失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 从 PendingApproval 元数据构建 IM 友好的审批通知（委托给 ApprovalNotificationService）
+     */
+    private String buildApprovalNotice(PendingApproval pending) {
+        return approvalNotificationService.buildApprovalText(pending);
+    }
+
+    /**
+     * 发布对话完成事件（触发异步记忆提取），失败不影响正常流程
+     */
+    private void publishConversationCompletedEvent(Long agentId, String conversationId,
+                                                    String userMessage, String assistantReply) {
+        try {
+            int msgCount = conversationService.getMessageCount(conversationId);
+            eventPublisher.publishEvent(new ConversationCompletedEvent(
+                    agentId, conversationId, userMessage, assistantReply, msgCount, "channel"));
+        } catch (Exception e) {
+            log.debug("[Memory] Failed to publish ConversationCompletedEvent: {}", e.getMessage());
+        }
+    }
+
+    // ==================== 流式处理（Web 渠道专用，不走队列） ====================
+
+    /**
+     * 路由消息并使用流式处理（用于支持流式的渠道，如 Web）
+     */
+    public Flux<String> routeStream(ChannelMessage message, ChannelEntity channelEntity) {
+        Long agentId = channelEntity.getAgentId();
+        if (agentId == null) {
+            return Flux.error(new IllegalStateException("Channel has no associated agent"));
+        }
+
+        String conversationId = buildConversationId(message);
+        String username = message.getSenderName() != null ? message.getSenderName() : message.getSenderId();
+
+        conversationService.getOrCreateConversation(conversationId, agentId, username);
+        List<MessageContentPart> parts = message.getContentParts();
+        conversationService.saveMessage(conversationId, "user", message.getContent(), parts);
+
+        String promptText = buildPromptFromParts(message.getContent(), parts);
+        return agentService.chatStream(agentId, promptText, conversationId);
+    }
+
+    // ==================== 优雅关闭 ====================
+
+    /**
+     * 优雅关闭：停止防抖调度器和所有消费线程
+     */
+    public void shutdown() {
+        log.info("Shutting down ChannelMessageRouter...");
+        shutdown = true;
+
+        // 1. 关闭防抖调度器
+        debounceScheduler.shutdownNow();
+
+        // 2. 清理残留的 pending 消息
+        synchronized (pendingMessages) {
+            pendingMessages.forEach((convId, pending) -> {
+                if (pending.timer != null) {
+                    pending.timer.cancel(false);
+                }
+                log.warn("Dropping pending debounced message for conversation: {}", convId);
+            });
+            pendingMessages.clear();
+        }
+
+        // 3. 关闭每个渠道的消费线程池：shutdown -> 等待 5 秒 -> shutdownNow
+        channelExecutors.forEach((channelType, executor) -> {
+            log.info("[{}] Shutting down consumer threads...", channelType);
+            executor.shutdown();
+            try {
+                if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
+                    log.warn("[{}] Consumer threads did not terminate in 5s, forcing shutdown", channelType);
+                    executor.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                executor.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+        });
+
+        channelExecutors.clear();
+        channelQueues.clear();
+        sessionLocks.clear();
+        log.info("ChannelMessageRouter shutdown complete");
+    }
+
+    // ==================== 工具方法 ====================
+
+    /**
+     * 构建会话 ID
+     * 格式：{channelType}:{chatId 或 senderId}
+     * 格式采用 {channelType}:{identifier} 命名规则
+     */
+    private String buildConversationId(ChannelMessage message) {
+        String identifier = message.getChatId() != null ? message.getChatId() : message.getSenderId();
+        return message.getChannelType() + ":" + identifier;
+    }
+
+    /**
+     * 确定回复目标
+     * 优先使用 replyToken（渠道特有的回复标识），其次 chatId，最后 senderId
+     */
+    private String resolveReplyTarget(ChannelMessage message) {
+        if (message.getReplyToken() != null) {
+            return message.getReplyToken();
+        }
+        return message.getChatId() != null ? message.getChatId() : message.getSenderId();
+    }
+
+    /**
+     * 从 contentParts 构建完整 prompt 文本。
+     * 文本直接拼接；媒体类型生成描述性占位符，让 Agent 知道用户发送了什么。
+     */
+    private String buildPromptFromParts(String fallbackContent, List<MessageContentPart> parts) {
+        if (parts == null || parts.isEmpty()) {
+            return fallbackContent != null ? fallbackContent : "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (MessageContentPart part : parts) {
+            if (part == null || part.getType() == null) continue;
+            switch (part.getType()) {
+                case "text" -> appendLine(sb, part.getText());
+                case "image" -> appendLine(sb, "[用户发送了图片" + descMedia(part) + "]");
+                case "file" -> appendLine(sb, "[用户发送了文件: " + safe(part.getFileName()) + "]");
+                case "audio" -> appendLine(sb, "[用户发送了音频" + descMedia(part) + "]");
+                case "video" -> appendLine(sb, "[用户发送了视频" + descMedia(part) + "]");
+                default -> appendLine(sb, part.getText());
+            }
+        }
+        String result = sb.toString().trim();
+        return result.isEmpty() ? (fallbackContent != null ? fallbackContent : "") : result;
+    }
+
+    private void appendLine(StringBuilder sb, String text) {
+        if (text == null || text.isBlank()) return;
+        if (!sb.isEmpty()) sb.append('\n');
+        sb.append(text);
+    }
+
+    private String descMedia(MessageContentPart part) {
+        if (part.getFileName() != null && !part.getFileName().isBlank()) {
+            return ": " + part.getFileName();
+        }
+        return "";
+    }
+
+    private String safe(String s) {
+        return s == null ? "" : s;
+    }
+}
