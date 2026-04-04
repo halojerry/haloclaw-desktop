@@ -57,10 +57,22 @@ public class ModelDiscoveryService {
         long start = System.currentTimeMillis();
 
         try {
-            // 连接测试本质上就是调用模型列表 API，成功就说明连接正常
-            fetchRemoteModels(provider, protocol);
-            long latency = System.currentTimeMillis() - start;
-            return TestResult.ok(latency, "连接成功");
+            if (Boolean.TRUE.equals(provider.getSupportModelDiscovery())) {
+                // 支持模型发现的 provider：调用模型列表 API 验证连接
+                fetchRemoteModels(provider, protocol);
+                long latency = System.currentTimeMillis() - start;
+                return TestResult.ok(latency, "连接成功");
+            } else {
+                // 不支持模型发现（如智谱）：用第一个已配置模型发送测试请求
+                List<ModelConfigEntity> models = modelConfigService.listModelsByProvider(providerId);
+                if (models.isEmpty()) {
+                    throw new MateClawException("该供应商没有已配置的模型，无法测试连接");
+                }
+                String testModelId = models.get(0).getModelName();
+                String response = sendTestPrompt(provider, protocol, testModelId);
+                long latency = System.currentTimeMillis() - start;
+                return TestResult.ok(latency, response);
+            }
         } catch (Exception e) {
             long latency = System.currentTimeMillis() - start;
             return TestResult.fail(latency, extractErrorMessage(e));
@@ -217,18 +229,21 @@ public class ModelDiscoveryService {
                 "temperature", 0
         );
 
+        // 从 generateKwargs 读取 completionsPath（智谱等用 /chat/completions 而非 /v1/chat/completions）
+        Map<String, Object> kwargs = modelProviderService.readProviderGenerateKwargs(provider);
+        String completionsPath = resolveCompletionsPath(baseUrl, kwargs);
+
         RestClient.RequestHeadersSpec<?> spec = RestClient.builder()
                 .baseUrl(baseUrl)
                 .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
                 .build()
                 .post()
-                .uri("/v1/chat/completions")
+                .uri(completionsPath)
                 .body(requestBody);
 
         if (modelProviderService.hasUsableApiKey(provider.getApiKey())) {
             spec = spec.header(HttpHeaders.AUTHORIZATION, "Bearer " + provider.getApiKey().trim());
         }
-        Map<String, Object> kwargs = modelProviderService.readProviderGenerateKwargs(provider);
         applyCustomHeaders(spec, kwargs);
 
         String body = spec.retrieve().body(String.class);
@@ -415,6 +430,29 @@ public class ModelDiscoveryService {
     }
 
     // ==================== 工具方法 ====================
+
+    /**
+     * 从 generateKwargs 中解析 completionsPath，处理 baseUrl 与路径前缀的重叠。
+     * 例如：baseUrl 以 /v4 结尾，completionsPath 为 /chat/completions → 最终 /chat/completions
+     *       baseUrl 以 /v1 结尾，completionsPath 为 /v1/chat/completions → 最终 /chat/completions
+     */
+    private String resolveCompletionsPath(String baseUrl, Map<String, Object> kwargs) {
+        String path = "/v1/chat/completions";
+        if (kwargs != null) {
+            Object raw = kwargs.get("completionsPath");
+            if (raw instanceof String value && StringUtils.hasText(value)) {
+                path = value.trim();
+                if (!path.startsWith("/")) {
+                    path = "/" + path;
+                }
+            }
+        }
+        // 避免路径重叠：如果 baseUrl 以 /v1 结尾且 path 以 /v1/ 开头，去掉重复
+        if (baseUrl != null && baseUrl.endsWith("/v1") && path.startsWith("/v1/")) {
+            path = path.substring(3);
+        }
+        return path;
+    }
 
     private String normalizeBaseUrl(String baseUrl) {
         if (!StringUtils.hasText(baseUrl)) {
