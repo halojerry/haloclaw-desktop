@@ -389,6 +389,37 @@ VALUES (
 )
 ON DUPLICATE KEY UPDATE name=VALUES(name), description=VALUES(description), transport=VALUES(transport), url=VALUES(url), headers_json=VALUES(headers_json), command=VALUES(command), args_json=VALUES(args_json), env_json=VALUES(env_json), cwd=VALUES(cwd), enabled=VALUES(enabled), connect_timeout_seconds=VALUES(connect_timeout_seconds), read_timeout_seconds=VALUES(read_timeout_seconds), last_status=VALUES(last_status), last_error=VALUES(last_error), last_connected_time=VALUES(last_connected_time), tool_count=VALUES(tool_count), builtin=VALUES(builtin), update_time=VALUES(update_time), deleted=VALUES(deleted);
 
+-- 预置 MCP Server：GitHub（需配置 GITHUB_TOKEN 环境变量后启用）
+INSERT INTO mate_mcp_server (
+    id, name, description, transport, url, headers_json, command, args_json, env_json, cwd,
+    enabled, connect_timeout_seconds, read_timeout_seconds, last_status, last_error,
+    last_connected_time, tool_count, builtin, create_time, update_time, deleted
+)
+VALUES (
+    1000000902,
+    'github',
+    'GitHub MCP Server — 搜索仓库/代码/Issues，管理 PR 和文件',
+    'stdio',
+    NULL,
+    NULL,
+    'npx',
+    '["-y","@modelcontextprotocol/server-github"]',
+    '{"GITHUB_PERSONAL_ACCESS_TOKEN":""}',
+    NULL,
+    FALSE,
+    30,
+    30,
+    'disconnected',
+    NULL,
+    NULL,
+    0,
+    FALSE,
+    NOW(),
+    NOW(),
+    0
+)
+ON DUPLICATE KEY UPDATE name=VALUES(name), description=VALUES(description), transport=VALUES(transport), url=VALUES(url), headers_json=VALUES(headers_json), command=VALUES(command), args_json=VALUES(args_json), env_json=VALUES(env_json), cwd=VALUES(cwd), enabled=VALUES(enabled), connect_timeout_seconds=VALUES(connect_timeout_seconds), read_timeout_seconds=VALUES(read_timeout_seconds), last_status=VALUES(last_status), last_error=VALUES(last_error), last_connected_time=VALUES(last_connected_time), tool_count=VALUES(tool_count), builtin=VALUES(builtin), update_time=VALUES(update_time), deleted=VALUES(deleted);
+
 -- 内置技能：从 MateClaw 迁移的技能元数据
 INSERT INTO mate_skill (id, name, description, skill_type, icon, version, author, config_json, enabled, builtin, tags, create_time, update_time, deleted)
 VALUES (1000000001, 'cron', '定时任务管理。通过命令或控制台创建、查询、暂停、恢复、删除任务，按时间表执行并把结果发到频道。', 'builtin', '⏰', '1.0.0', 'MateClaw', '{"upstream":"mateclaw","entryFile":"SKILL.md"}', TRUE, TRUE, 'cron,schedule,automation', NOW(), NOW(), 0)

@@ -387,6 +387,37 @@ VALUES (
 )
 ON DUPLICATE KEY UPDATE name=VALUES(name), description=VALUES(description), transport=VALUES(transport), url=VALUES(url), headers_json=VALUES(headers_json), command=VALUES(command), args_json=VALUES(args_json), env_json=VALUES(env_json), cwd=VALUES(cwd), enabled=VALUES(enabled), connect_timeout_seconds=VALUES(connect_timeout_seconds), read_timeout_seconds=VALUES(read_timeout_seconds), last_status=VALUES(last_status), last_error=VALUES(last_error), last_connected_time=VALUES(last_connected_time), tool_count=VALUES(tool_count), builtin=VALUES(builtin), update_time=VALUES(update_time), deleted=VALUES(deleted);
 
+-- Pre-configured MCP Server: GitHub (enable after setting GITHUB_TOKEN env var)
+INSERT INTO mate_mcp_server (
+    id, name, description, transport, url, headers_json, command, args_json, env_json, cwd,
+    enabled, connect_timeout_seconds, read_timeout_seconds, last_status, last_error,
+    last_connected_time, tool_count, builtin, create_time, update_time, deleted
+)
+VALUES (
+    1000000902,
+    'github',
+    'GitHub MCP Server — Search repos/code/issues, manage PRs and files',
+    'stdio',
+    NULL,
+    NULL,
+    'npx',
+    '["-y","@modelcontextprotocol/server-github"]',
+    '{"GITHUB_PERSONAL_ACCESS_TOKEN":""}',
+    NULL,
+    FALSE,
+    30,
+    30,
+    'disconnected',
+    NULL,
+    NULL,
+    0,
+    FALSE,
+    NOW(),
+    NOW(),
+    0
+)
+ON DUPLICATE KEY UPDATE name=VALUES(name), description=VALUES(description), transport=VALUES(transport), url=VALUES(url), headers_json=VALUES(headers_json), command=VALUES(command), args_json=VALUES(args_json), env_json=VALUES(env_json), cwd=VALUES(cwd), enabled=VALUES(enabled), connect_timeout_seconds=VALUES(connect_timeout_seconds), read_timeout_seconds=VALUES(read_timeout_seconds), last_status=VALUES(last_status), last_error=VALUES(last_error), last_connected_time=VALUES(last_connected_time), tool_count=VALUES(tool_count), builtin=VALUES(builtin), update_time=VALUES(update_time), deleted=VALUES(deleted);
+
 -- Built-in skills: skill metadata
 INSERT INTO mate_skill (id, name, description, skill_type, icon, version, author, config_json, enabled, builtin, tags, create_time, update_time, deleted)
 VALUES (1000000001, 'cron', 'Cron job management. Create, query, pause, resume, delete tasks via commands or console. Execute on schedule and send results to channels.', 'builtin', '⏰', '1.0.0', 'MateClaw', '{"upstream":"mateclaw","entryFile":"SKILL.md"}', TRUE, TRUE, 'cron,schedule,automation', NOW(), NOW(), 0)
