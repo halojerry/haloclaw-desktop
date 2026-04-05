@@ -488,6 +488,15 @@ export default {
     audit: {
       title: 'Audit Logs',
       desc: 'View tool security check records',
+      config: {
+        title: 'Audit Configuration',
+        enabled: 'Enable Audit Logging',
+        enabledHint: 'When disabled, tool invocation audit logs will not be recorded',
+        minSeverity: 'Minimum Severity',
+        minSeverityHint: 'Only record audit events at this severity level and above',
+        retentionDays: 'Retention Days',
+        retentionDaysHint: 'Audit logs older than this will be auto-cleaned (0=never)',
+      },
       stats: {
         total: 'Total Checks',
         blocked: 'Blocked',

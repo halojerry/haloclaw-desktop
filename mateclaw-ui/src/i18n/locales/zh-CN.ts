@@ -488,6 +488,15 @@ export default {
     audit: {
       title: '审计日志',
       desc: '查看工具安全检查记录',
+      config: {
+        title: '审计配置',
+        enabled: '启用审计日志',
+        enabledHint: '关闭后将不再记录工具调用审计日志',
+        minSeverity: '最低记录等级',
+        minSeverityHint: '仅记录达到此等级及以上的审计事件',
+        retentionDays: '保留天数',
+        retentionDaysHint: '超过此天数的审计日志将被自动清理（0=永不清理）',
+      },
       stats: {
         total: '总检查',
         blocked: '已阻止',

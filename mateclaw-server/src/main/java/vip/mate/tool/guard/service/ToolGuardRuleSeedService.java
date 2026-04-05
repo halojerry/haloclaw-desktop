@@ -1,6 +1,7 @@
 package vip.mate.tool.guard.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;
@@ -9,17 +10,23 @@ import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import vip.mate.tool.guard.model.GuardCategory;
 import vip.mate.tool.guard.model.GuardSeverity;
+import vip.mate.tool.guard.model.ToolGuardConfigEntity;
 import vip.mate.tool.guard.model.ToolGuardRuleEntity;
+import vip.mate.tool.guard.repository.ToolGuardConfigMapper;
 import vip.mate.tool.guard.repository.ToolGuardRuleMapper;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * 规则种子服务
  * <p>
- * 首次启动时将内置规则写入 DB。
- * 已存在则跳过（通过 rule_id UNIQUE 约束）。
+ * 启动时完成三项工作：
+ * <ol>
+ *   <li>迁移旧版工具名（类名 → @Tool 方法名）+ 清理旧 legacy 规则</li>
+ *   <li>按 rule_id 逐条 upsert 内置规则（不存在则插入，已存在则同步更新）</li>
+ *   <li>迁移 guardedToolsJson 中的旧工具名</li>
+ * </ol>
  */
 @Slf4j
 @Component
@@ -28,36 +35,174 @@ import java.util.List;
 public class ToolGuardRuleSeedService implements ApplicationRunner {
 
     private final ToolGuardRuleMapper ruleMapper;
+    private final ToolGuardConfigMapper configMapper;
+
+    /** 旧类名 → 新 @Tool 方法名 */
+    private static final Map<String, String> TOOL_NAME_RENAMES = Map.of(
+            "ShellExecuteTool", "execute_shell_command",
+            "WriteFileTool", "write_file",
+            "EditFileTool", "edit_file"
+    );
+
+    /** 旧 SQL 种子中的 legacy rule_id，已被 Java 种子的新规则完全覆盖 */
+    private static final Set<String> LEGACY_RULE_IDS = Set.of(
+            "write_file_any",
+            "edit_file_any",
+            "shell_rm_approval",
+            "shell_rm_rf_block",
+            "shell_write_system_file",
+            "shell_chmod_777"
+    );
 
     @Override
     public void run(ApplicationArguments args) {
+        migrateOldData();
         seedBuiltinRules();
     }
 
+    // ==================== 旧数据迁移 ====================
+
+    /**
+     * 将 DB 中旧版数据统一迁移：
+     * <ul>
+     *   <li>rule 表旧工具名（类名 → @Tool 方法名）</li>
+     *   <li>清理 legacy rule_id（旧 SQL 种子残留）</li>
+     *   <li>config 表 guardedToolsJson 中的旧工具名</li>
+     * </ul>
+     */
+    private void migrateOldData() {
+        try {
+            // 1. 迁移 rule 表旧工具名
+            for (var entry : TOOL_NAME_RENAMES.entrySet()) {
+                int updated = ruleMapper.update(null,
+                        new LambdaUpdateWrapper<ToolGuardRuleEntity>()
+                                .eq(ToolGuardRuleEntity::getToolName, entry.getKey())
+                                .set(ToolGuardRuleEntity::getToolName, entry.getValue()));
+                if (updated > 0) {
+                    log.info("[RuleSeed] Migrated {} rules: {} -> {}", updated, entry.getKey(), entry.getValue());
+                }
+            }
+
+            // 2. 清理旧 SQL 种子残留的 legacy 规则
+            cleanupLegacyRules();
+
+            // 3. 迁移 config 表 guardedToolsJson
+            migrateGuardedToolsJson();
+        } catch (Exception e) {
+            log.warn("[RuleSeed] Migration failed (table may not exist): {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 删除旧 SQL 种子中残留的 legacy builtin 规则。
+     * 这些规则的 rule_id 与新 Java 种子不重叠，增量升级后会形成冗余重复。
+     */
+    private void cleanupLegacyRules() {
+        for (String legacyId : LEGACY_RULE_IDS) {
+            int deleted = ruleMapper.delete(
+                    new LambdaQueryWrapper<ToolGuardRuleEntity>()
+                            .eq(ToolGuardRuleEntity::getRuleId, legacyId)
+                            .eq(ToolGuardRuleEntity::getBuiltin, true));
+            if (deleted > 0) {
+                log.info("[RuleSeed] Removed legacy rule: {}", legacyId);
+            }
+        }
+    }
+
+    private void migrateGuardedToolsJson() {
+        try {
+            List<ToolGuardConfigEntity> configs = configMapper.selectList(null);
+            for (ToolGuardConfigEntity config : configs) {
+                String json = config.getGuardedToolsJson();
+                if (json == null || json.isBlank()) continue;
+
+                String updated = json;
+                for (var entry : TOOL_NAME_RENAMES.entrySet()) {
+                    updated = updated.replace("\"" + entry.getKey() + "\"", "\"" + entry.getValue() + "\"");
+                }
+                if (!updated.equals(json)) {
+                    config.setGuardedToolsJson(updated);
+                    configMapper.updateById(config);
+                    log.info("[RuleSeed] Migrated guardedToolsJson: {} -> {}", json, updated);
+                }
+            }
+        } catch (Exception e) {
+            log.debug("[RuleSeed] guardedToolsJson migration skipped: {}", e.getMessage());
+        }
+    }
+
+    // ==================== 规则种子 ====================
+
+    /**
+     * 按 rule_id 逐条 upsert 内置规则：
+     * <ul>
+     *   <li>不存在 → 插入</li>
+     *   <li>已存在 → 同步更新 pattern / severity / decision / priority / toolName 等字段</li>
+     * </ul>
+     * 这样后续版本修正了 regex 或 severity，已有部署也能在重启时自动拿到更新。
+     */
     void seedBuiltinRules() {
         try {
-            Long existingCount = ruleMapper.selectCount(
+            // 加载已有 builtin 规则（按 rule_id 索引）
+            List<ToolGuardRuleEntity> existingList = ruleMapper.selectList(
                     new LambdaQueryWrapper<ToolGuardRuleEntity>()
                             .eq(ToolGuardRuleEntity::getBuiltin, true));
-            if (existingCount > 0) {
-                log.info("[RuleSeed] {} builtin rules already exist, skipping seed", existingCount);
-                return;
-            }
+            Map<String, ToolGuardRuleEntity> existingMap = existingList.stream()
+                    .collect(Collectors.toMap(ToolGuardRuleEntity::getRuleId, e -> e, (a, b) -> a));
 
             List<ToolGuardRuleEntity> rules = buildBuiltinRules();
             int inserted = 0;
+            int updated = 0;
+            int unchanged = 0;
+
             for (ToolGuardRuleEntity rule : rules) {
-                try {
-                    ruleMapper.insert(rule);
-                    inserted++;
-                } catch (Exception e) {
-                    log.debug("[RuleSeed] Rule {} already exists", rule.getRuleId());
+                ToolGuardRuleEntity existing = existingMap.get(rule.getRuleId());
+                if (existing == null) {
+                    // 新规则 → 插入
+                    try {
+                        ruleMapper.insert(rule);
+                        inserted++;
+                    } catch (Exception e) {
+                        log.debug("[RuleSeed] Rule {} insert failed: {}", rule.getRuleId(), e.getMessage());
+                    }
+                } else if (needsUpdate(existing, rule)) {
+                    // 已存在但内容有变化 → 更新
+                    ruleMapper.update(null,
+                            new LambdaUpdateWrapper<ToolGuardRuleEntity>()
+                                    .eq(ToolGuardRuleEntity::getRuleId, rule.getRuleId())
+                                    .set(ToolGuardRuleEntity::getName, rule.getName())
+                                    .set(ToolGuardRuleEntity::getDescription, rule.getDescription())
+                                    .set(ToolGuardRuleEntity::getPattern, rule.getPattern())
+                                    .set(ToolGuardRuleEntity::getSeverity, rule.getSeverity())
+                                    .set(ToolGuardRuleEntity::getCategory, rule.getCategory())
+                                    .set(ToolGuardRuleEntity::getDecision, rule.getDecision())
+                                    .set(ToolGuardRuleEntity::getToolName, rule.getToolName())
+                                    .set(ToolGuardRuleEntity::getRemediation, rule.getRemediation())
+                                    .set(ToolGuardRuleEntity::getPriority, rule.getPriority()));
+                    updated++;
+                } else {
+                    unchanged++;
                 }
             }
-            log.info("[RuleSeed] Seeded {} builtin rules", inserted);
+            log.info("[RuleSeed] Builtin rules: {} inserted, {} updated, {} unchanged",
+                    inserted, updated, unchanged);
         } catch (Exception e) {
             log.warn("[RuleSeed] Failed to seed rules (table may not exist): {}", e.getMessage());
         }
+    }
+
+    /**
+     * 判断已有 builtin 规则是否需要更新（任一核心字段有变化即需要）
+     */
+    private boolean needsUpdate(ToolGuardRuleEntity existing, ToolGuardRuleEntity expected) {
+        return !Objects.equals(existing.getPattern(), expected.getPattern())
+                || !Objects.equals(existing.getSeverity(), expected.getSeverity())
+                || !Objects.equals(existing.getCategory(), expected.getCategory())
+                || !Objects.equals(existing.getDecision(), expected.getDecision())
+                || !Objects.equals(existing.getToolName(), expected.getToolName())
+                || !Objects.equals(existing.getPriority(), expected.getPriority())
+                || !Objects.equals(existing.getName(), expected.getName())
+                || !Objects.equals(existing.getRemediation(), expected.getRemediation());
     }
 
     private List<ToolGuardRuleEntity> buildBuiltinRules() {
@@ -97,6 +242,10 @@ public class ToolGuardRuleSeedService implements ApplicationRunner {
                 "execute_shell_command", "此命令可能被用于远程控制", 200));
 
         // === HIGH Shell Rules ===
+        rules.add(rule("SHELL_RM", "rm 删除命令", "(^|[;&|]|\\s)rm\\s",
+                GuardSeverity.HIGH, GuardCategory.COMMAND_INJECTION, "NEEDS_APPROVAL",
+                "execute_shell_command", "请确认要删除的文件列表，考虑使用 trash 替代 rm", 150));
+
         rules.add(rule("SHELL_RM_RF", "递归强制删除", "rm\\s+-(rf|fr)",
                 GuardSeverity.HIGH, GuardCategory.COMMAND_INJECTION, "NEEDS_APPROVAL",
                 "execute_shell_command", "使用 rm -ri 或指定具体文件", 150));

@@ -11,6 +11,8 @@ import org.springframework.stereotype.Service;
 import vip.mate.tool.guard.model.ToolGuardConfigEntity;
 import vip.mate.tool.guard.repository.ToolGuardConfigMapper;
 
+import vip.mate.tool.guard.model.GuardSeverity;
+
 import java.util.List;
 import java.util.Set;
 
@@ -51,6 +53,9 @@ public class ToolGuardConfigService {
         if (config.getDeniedToolsJson() != null) existing.setDeniedToolsJson(config.getDeniedToolsJson());
         if (config.getFileGuardEnabled() != null) existing.setFileGuardEnabled(config.getFileGuardEnabled());
         if (config.getSensitivePathsJson() != null) existing.setSensitivePathsJson(config.getSensitivePathsJson());
+        if (config.getAuditEnabled() != null) existing.setAuditEnabled(config.getAuditEnabled());
+        if (config.getAuditMinSeverity() != null) existing.setAuditMinSeverity(config.getAuditMinSeverity());
+        if (config.getAuditRetentionDays() != null) existing.setAuditRetentionDays(config.getAuditRetentionDays());
         configMapper.updateById(existing);
         // 通知 AgentService 刷新缓存（denied 工具列表变更需要重建 agent 的工具集）
         eventPublisher.publishEvent(new ToolGuardConfigChangedEvent(this));
@@ -88,6 +93,27 @@ public class ToolGuardConfigService {
     public List<String> getSensitivePaths() {
         String json = getConfig().getSensitivePathsJson();
         return parseJsonList(json);
+    }
+
+    // ==================== 审计配置 ====================
+
+    public boolean isAuditEnabled() {
+        return Boolean.TRUE.equals(getConfig().getAuditEnabled());
+    }
+
+    public GuardSeverity getAuditMinSeverity() {
+        String s = getConfig().getAuditMinSeverity();
+        if (s == null || s.isBlank()) return GuardSeverity.INFO;
+        try {
+            return GuardSeverity.valueOf(s);
+        } catch (IllegalArgumentException e) {
+            return GuardSeverity.INFO;
+        }
+    }
+
+    public int getAuditRetentionDays() {
+        Integer days = getConfig().getAuditRetentionDays();
+        return days != null ? days : 90;
     }
 
     // ==================== 内部方法 ====================

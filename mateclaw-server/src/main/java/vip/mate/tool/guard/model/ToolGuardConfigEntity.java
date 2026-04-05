@@ -22,6 +22,13 @@ public class ToolGuardConfigEntity {
     private Boolean fileGuardEnabled;
     private String sensitivePathsJson;
 
+    /** 审计日志总开关 */
+    private Boolean auditEnabled;
+    /** 最低记录等级（INFO/LOW/MEDIUM/HIGH/CRITICAL） */
+    private String auditMinSeverity;
+    /** 审计日志保留天数（0=永不清理） */
+    private Integer auditRetentionDays;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createTime;
 

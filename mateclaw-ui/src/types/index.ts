@@ -584,6 +584,9 @@ export interface GuardConfig {
   deniedToolsJson?: string
   fileGuardEnabled: boolean
   sensitivePathsJson?: string
+  auditEnabled?: boolean
+  auditMinSeverity?: string
+  auditRetentionDays?: number
 }
 
 export interface AuditLogEntry {

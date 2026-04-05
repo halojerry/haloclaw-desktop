@@ -1724,149 +1724,26 @@ VALUES (
 
 -- ==================== ToolGuard 默认配置与规则种子数据 ====================
 
--- 全局安全配置（只有一行）
-MERGE INTO mate_tool_guard_config (id, enabled, guard_scope, guarded_tools_json, denied_tools_json,
-    file_guard_enabled, sensitive_paths_json, create_time, update_time)
-KEY (id)
-VALUES (
+-- 全局安全配置（只有一行，仅首次初始化时插入）
+-- 注意：guarded_tools_json 中的工具名必须与 @Tool 方法名一致（execute_shell_command / write_file / edit_file）
+-- 使用 SELECT + INSERT 确保已存在时不覆盖（H2 的 MERGE 会覆盖所有列，会重置用户修改的配置）
+INSERT INTO mate_tool_guard_config (id, enabled, guard_scope, guarded_tools_json, denied_tools_json,
+    file_guard_enabled, sensitive_paths_json, audit_enabled, audit_min_severity, audit_retention_days,
+    create_time, update_time)
+SELECT
     1000000001,
     TRUE,
     'all',
-    '["WriteFileTool","EditFileTool","ShellExecuteTool"]',
+    '["write_file","edit_file","execute_shell_command"]',
     '[]',
     TRUE,
     '["/etc","/usr","/bin","/sbin","/boot","/sys","/proc","/dev"]',
+    TRUE, 'INFO', 90,
     NOW(), NOW()
-);
+FROM DUAL
+WHERE NOT EXISTS (SELECT 1 FROM mate_tool_guard_config WHERE id = 1000000001);
 
--- 安全规则：WriteFileTool — 任意路径写入需要审批（HIGH）
-MERGE INTO mate_tool_guard_rule (id, rule_id, name, description, tool_name, param_name,
-    category, severity, decision, pattern, exclude_pattern, remediation,
-    builtin, enabled, priority, create_time, update_time, deleted)
-KEY (id)
-VALUES (
-    1000300001,
-    'write_file_any',
-    '文件写入需审批',
-    '任何文件写入操作都需要用户确认，防止意外覆盖重要文件',
-    'WriteFileTool',
-    'path',
-    'file_write',
-    'HIGH',
-    'NEEDS_APPROVAL',
-    '.+',
-    NULL,
-    '请确认写入路径和内容正确后再允许执行',
-    TRUE, TRUE, 10,
-    NOW(), NOW(), 0
-);
-
--- 安全规则：EditFileTool — 任意文件编辑需要审批（HIGH）
-MERGE INTO mate_tool_guard_rule (id, rule_id, name, description, tool_name, param_name,
-    category, severity, decision, pattern, exclude_pattern, remediation,
-    builtin, enabled, priority, create_time, update_time, deleted)
-KEY (id)
-VALUES (
-    1000300002,
-    'edit_file_any',
-    '文件编辑需审批',
-    '任何文件内容替换操作都需要用户确认',
-    'EditFileTool',
-    'path',
-    'file_write',
-    'HIGH',
-    'NEEDS_APPROVAL',
-    '.+',
-    NULL,
-    '请确认编辑路径和替换内容正确后再允许执行',
-    TRUE, TRUE, 10,
-    NOW(), NOW(), 0
-);
-
--- 安全规则：ShellExecuteTool — 删除命令需审批（HIGH）
-MERGE INTO mate_tool_guard_rule (id, rule_id, name, description, tool_name, param_name,
-    category, severity, decision, pattern, exclude_pattern, remediation,
-    builtin, enabled, priority, create_time, update_time, deleted)
-KEY (id)
-VALUES (
-    1000300003,
-    'shell_rm_approval',
-    'rm 命令需审批',
-    'rm / rmdir 命令可能导致文件永久丢失，需要用户确认',
-    'ShellExecuteTool',
-    'command',
-    'shell_execution',
-    'HIGH',
-    'NEEDS_APPROVAL',
-    '(?i)(^|[;&|]|\s)rm\s',
-    NULL,
-    '考虑使用 trash 命令替代 rm，或确认要删除的文件列表后再允许执行',
-    TRUE, TRUE, 20,
-    NOW(), NOW(), 0
-);
-
--- 安全规则：ShellExecuteTool — 强制递归删除直接拦截（CRITICAL）
-MERGE INTO mate_tool_guard_rule (id, rule_id, name, description, tool_name, param_name,
-    category, severity, decision, pattern, exclude_pattern, remediation,
-    builtin, enabled, priority, create_time, update_time, deleted)
-KEY (id)
-VALUES (
-    1000300004,
-    'shell_rm_rf_block',
-    'rm -rf 直接拦截',
-    'rm -rf 强制递归删除极度危险，直接拦截',
-    'ShellExecuteTool',
-    'command',
-    'shell_execution',
-    'CRITICAL',
-    'BLOCK',
-    '(?i)rm\s+(-[a-z]*r[a-z]*f[a-z]*|-[a-z]*f[a-z]*r[a-z]*)\s+(/|~|\$HOME|\*|\.\s*$)',
-    NULL,
-    '绝对禁止对根目录、Home 目录或通配符执行 rm -rf',
-    TRUE, TRUE, 5,
-    NOW(), NOW(), 0
-);
-
--- 安全规则：ShellExecuteTool — 写入系统配置文件需审批（HIGH）
-MERGE INTO mate_tool_guard_rule (id, rule_id, name, description, tool_name, param_name,
-    category, severity, decision, pattern, exclude_pattern, remediation,
-    builtin, enabled, priority, create_time, update_time, deleted)
-KEY (id)
-VALUES (
-    1000300005,
-    'shell_write_system_file',
-    '写入系统文件需审批',
-    '通过 Shell 向 /etc / /usr 等系统目录写入内容需要用户确认',
-    'ShellExecuteTool',
-    'command',
-    'shell_execution',
-    'HIGH',
-    'NEEDS_APPROVAL',
-    '(?i)(>\s*|tee\s+|cp\s+.*\s+)(/etc/|/usr/|/bin/|/sbin/|/boot/)',
-    NULL,
-    '请确认要修改的系统文件和内容后再允许执行',
-    TRUE, TRUE, 15,
-    NOW(), NOW(), 0
-);
-
--- 安全规则：ShellExecuteTool — chmod 777 需审批（MEDIUM）
-MERGE INTO mate_tool_guard_rule (id, rule_id, name, description, tool_name, param_name,
-    category, severity, decision, pattern, exclude_pattern, remediation,
-    builtin, enabled, priority, create_time, update_time, deleted)
-KEY (id)
-VALUES (
-    1000300006,
-    'shell_chmod_777',
-    'chmod 777 需审批',
-    'chmod 777 给予所有用户完全权限，存在安全风险',
-    'ShellExecuteTool',
-    'command',
-    'shell_execution',
-    'MEDIUM',
-    'NEEDS_APPROVAL',
-    '(?i)chmod\s+(777|a\+rwx|o\+rwx)',
-    NULL,
-    '请确认是否真的需要给予所有用户完全权限',
-    TRUE, TRUE, 30,
-    NOW(), NOW(), 0
-);
+-- 安全规则由 ToolGuardRuleSeedService (Java) 统一种子化，不在 SQL 中重复维护
+-- 已移除旧的 6 条 SQL 规则（rule_id: write_file_any, edit_file_any, shell_rm_approval,
+-- shell_rm_rf_block, shell_write_system_file, shell_chmod_777），
+-- 它们的超集已在 ToolGuardRuleSeedService.buildBuiltinRules() 中以正确的工具名注册。

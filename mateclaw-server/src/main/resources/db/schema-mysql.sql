@@ -347,6 +347,9 @@ CREATE TABLE IF NOT EXISTS mate_tool_guard_config (
     denied_tools_json    TEXT,
     file_guard_enabled   TINYINT(1)   NOT NULL DEFAULT 1,
     sensitive_paths_json TEXT,
+    audit_enabled        TINYINT(1)   NOT NULL DEFAULT 1,
+    audit_min_severity   VARCHAR(16)  NOT NULL DEFAULT 'INFO',
+    audit_retention_days INT          NOT NULL DEFAULT 90,
     create_time          DATETIME     NOT NULL,
     update_time          DATETIME     NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -42,7 +42,7 @@ public class ShellExecuteTool {
 
     @Tool(description = "在本地服务器上执行 Shell 命令。用于执行系统命令、查看文件、运行脚本等操作。"
             + "Windows 下使用 cmd.exe，Linux/macOS 下使用 /bin/sh。"
-            + "注意：每次执行都需要用户审批确认。返回包含 exitCode、stdout、stderr、timedOut 的结构化结果。")
+            + "危险操作（如 rm -rf、格式化磁盘等）会触发安全审批。返回包含 exitCode、stdout、stderr、timedOut 的结构化结果。")
     public String execute_shell_command(
             @ToolParam(description = "要执行的 Shell 命令") String command,
             @ToolParam(description = "超时秒数，默认 60 秒", required = false) Integer timeoutSeconds) {

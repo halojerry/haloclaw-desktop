@@ -186,6 +186,13 @@ public class ShellCommandGuardian implements ToolGuardGuardian {
                 "此命令可能被用于远程控制，请勿执行"));
 
         // === 高风险（HIGH）===
+        list.add(new ShellRule("SHELL_RM",
+                "(^|[;&|]|\\s)rm\\s",
+                GuardSeverity.HIGH, GuardCategory.COMMAND_INJECTION,
+                "rm 删除命令",
+                "检测到 rm 删除操作，可能导致文件永久丢失",
+                "请确认要删除的文件列表，考虑使用 trash 替代 rm"));
+
         list.add(new ShellRule("SHELL_RM_RF",
                 "rm\\s+-(rf|fr)",
                 GuardSeverity.HIGH, GuardCategory.COMMAND_INJECTION,

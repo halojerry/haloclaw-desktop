@@ -1719,149 +1719,22 @@ ON DUPLICATE KEY UPDATE agent_id=VALUES(agent_id), filename=VALUES(filename), co
 
 -- ==================== ToolGuard Default Config & Rule Seed Data ====================
 
--- Global security config (single row)
-INSERT INTO mate_tool_guard_config (id, enabled, guard_scope, guarded_tools_json, denied_tools_json,
-    file_guard_enabled, sensitive_paths_json, create_time, update_time)
+-- Global security config (single row, insert only if not exists, never overwrite user config)
+-- Note: tool names in guarded_tools_json must match @Tool method names (execute_shell_command / write_file / edit_file)
+INSERT IGNORE INTO mate_tool_guard_config (id, enabled, guard_scope, guarded_tools_json, denied_tools_json,
+    file_guard_enabled, sensitive_paths_json, audit_enabled, audit_min_severity, audit_retention_days,
+    create_time, update_time)
 VALUES (
     1000000001,
     TRUE,
     'all',
-    '["WriteFileTool","EditFileTool","ShellExecuteTool"]',
+    '["write_file","edit_file","execute_shell_command"]',
     '[]',
     TRUE,
     '["/etc","/usr","/bin","/sbin","/boot","/sys","/proc","/dev"]',
+    TRUE, 'INFO', 90,
     NOW(), NOW()
-)
-ON DUPLICATE KEY UPDATE enabled=VALUES(enabled), guard_scope=VALUES(guard_scope), guarded_tools_json=VALUES(guarded_tools_json), denied_tools_json=VALUES(denied_tools_json), file_guard_enabled=VALUES(file_guard_enabled), sensitive_paths_json=VALUES(sensitive_paths_json), update_time=VALUES(update_time);
+);
 
--- Security rule: WriteFileTool — any path write requires approval (HIGH)
-INSERT INTO mate_tool_guard_rule (id, rule_id, name, description, tool_name, param_name,
-    category, severity, decision, pattern, exclude_pattern, remediation,
-    builtin, enabled, priority, create_time, update_time, deleted)
-VALUES (
-    1000300001,
-    'write_file_any',
-    'File write requires approval',
-    'Any file write operation requires user confirmation to prevent accidental overwrite of important files',
-    'WriteFileTool',
-    'path',
-    'file_write',
-    'HIGH',
-    'NEEDS_APPROVAL',
-    '.+',
-    NULL,
-    'Please confirm write path and content are correct before allowing execution',
-    TRUE, TRUE, 10,
-    NOW(), NOW(), 0
-)
-ON DUPLICATE KEY UPDATE rule_id=VALUES(rule_id), name=VALUES(name), description=VALUES(description), tool_name=VALUES(tool_name), param_name=VALUES(param_name), category=VALUES(category), severity=VALUES(severity), decision=VALUES(decision), pattern=VALUES(pattern), exclude_pattern=VALUES(exclude_pattern), remediation=VALUES(remediation), builtin=VALUES(builtin), enabled=VALUES(enabled), priority=VALUES(priority), update_time=VALUES(update_time), deleted=VALUES(deleted);
-
--- Security rule: EditFileTool — any file edit requires approval (HIGH)
-INSERT INTO mate_tool_guard_rule (id, rule_id, name, description, tool_name, param_name,
-    category, severity, decision, pattern, exclude_pattern, remediation,
-    builtin, enabled, priority, create_time, update_time, deleted)
-VALUES (
-    1000300002,
-    'edit_file_any',
-    'File edit requires approval',
-    'Any file content replacement operation requires user confirmation',
-    'EditFileTool',
-    'path',
-    'file_write',
-    'HIGH',
-    'NEEDS_APPROVAL',
-    '.+',
-    NULL,
-    'Please confirm edit path and replacement content are correct before allowing execution',
-    TRUE, TRUE, 10,
-    NOW(), NOW(), 0
-)
-ON DUPLICATE KEY UPDATE rule_id=VALUES(rule_id), name=VALUES(name), description=VALUES(description), tool_name=VALUES(tool_name), param_name=VALUES(param_name), category=VALUES(category), severity=VALUES(severity), decision=VALUES(decision), pattern=VALUES(pattern), exclude_pattern=VALUES(exclude_pattern), remediation=VALUES(remediation), builtin=VALUES(builtin), enabled=VALUES(enabled), priority=VALUES(priority), update_time=VALUES(update_time), deleted=VALUES(deleted);
-
--- Security rule: ShellExecuteTool — delete commands require approval (HIGH)
-INSERT INTO mate_tool_guard_rule (id, rule_id, name, description, tool_name, param_name,
-    category, severity, decision, pattern, exclude_pattern, remediation,
-    builtin, enabled, priority, create_time, update_time, deleted)
-VALUES (
-    1000300003,
-    'shell_rm_approval',
-    'rm command requires approval',
-    'rm / rmdir commands may cause permanent file loss, requires user confirmation',
-    'ShellExecuteTool',
-    'command',
-    'shell_execution',
-    'HIGH',
-    'NEEDS_APPROVAL',
-    '(?i)(^|[;&|]|\s)rm\s',
-    NULL,
-    'Consider using trash command instead of rm, or confirm file list before allowing execution',
-    TRUE, TRUE, 20,
-    NOW(), NOW(), 0
-)
-ON DUPLICATE KEY UPDATE rule_id=VALUES(rule_id), name=VALUES(name), description=VALUES(description), tool_name=VALUES(tool_name), param_name=VALUES(param_name), category=VALUES(category), severity=VALUES(severity), decision=VALUES(decision), pattern=VALUES(pattern), exclude_pattern=VALUES(exclude_pattern), remediation=VALUES(remediation), builtin=VALUES(builtin), enabled=VALUES(enabled), priority=VALUES(priority), update_time=VALUES(update_time), deleted=VALUES(deleted);
-
--- Security rule: ShellExecuteTool — forced recursive delete blocked (CRITICAL)
-INSERT INTO mate_tool_guard_rule (id, rule_id, name, description, tool_name, param_name,
-    category, severity, decision, pattern, exclude_pattern, remediation,
-    builtin, enabled, priority, create_time, update_time, deleted)
-VALUES (
-    1000300004,
-    'shell_rm_rf_block',
-    'rm -rf blocked',
-    'rm -rf forced recursive delete is extremely dangerous, blocked directly',
-    'ShellExecuteTool',
-    'command',
-    'shell_execution',
-    'CRITICAL',
-    'BLOCK',
-    '(?i)rm\s+(-[a-z]*r[a-z]*f[a-z]*|-[a-z]*f[a-z]*r[a-z]*)\s+(/|~|\$HOME|\*|\.\s*$)',
-    NULL,
-    'Absolutely forbidden to execute rm -rf on root directory, Home directory, or wildcards',
-    TRUE, TRUE, 5,
-    NOW(), NOW(), 0
-)
-ON DUPLICATE KEY UPDATE rule_id=VALUES(rule_id), name=VALUES(name), description=VALUES(description), tool_name=VALUES(tool_name), param_name=VALUES(param_name), category=VALUES(category), severity=VALUES(severity), decision=VALUES(decision), pattern=VALUES(pattern), exclude_pattern=VALUES(exclude_pattern), remediation=VALUES(remediation), builtin=VALUES(builtin), enabled=VALUES(enabled), priority=VALUES(priority), update_time=VALUES(update_time), deleted=VALUES(deleted);
-
--- Security rule: ShellExecuteTool — writing system config files requires approval (HIGH)
-INSERT INTO mate_tool_guard_rule (id, rule_id, name, description, tool_name, param_name,
-    category, severity, decision, pattern, exclude_pattern, remediation,
-    builtin, enabled, priority, create_time, update_time, deleted)
-VALUES (
-    1000300005,
-    'shell_write_system_file',
-    'System file write requires approval',
-    'Writing to system directories like /etc or /usr via Shell requires user confirmation',
-    'ShellExecuteTool',
-    'command',
-    'shell_execution',
-    'HIGH',
-    'NEEDS_APPROVAL',
-    '(?i)(>\s*|tee\s+|cp\s+.*\s+)(/etc/|/usr/|/bin/|/sbin/|/boot/)',
-    NULL,
-    'Please confirm the system file and content to modify before allowing execution',
-    TRUE, TRUE, 15,
-    NOW(), NOW(), 0
-)
-ON DUPLICATE KEY UPDATE rule_id=VALUES(rule_id), name=VALUES(name), description=VALUES(description), tool_name=VALUES(tool_name), param_name=VALUES(param_name), category=VALUES(category), severity=VALUES(severity), decision=VALUES(decision), pattern=VALUES(pattern), exclude_pattern=VALUES(exclude_pattern), remediation=VALUES(remediation), builtin=VALUES(builtin), enabled=VALUES(enabled), priority=VALUES(priority), update_time=VALUES(update_time), deleted=VALUES(deleted);
-
--- Security rule: ShellExecuteTool — chmod 777 requires approval (MEDIUM)
-INSERT INTO mate_tool_guard_rule (id, rule_id, name, description, tool_name, param_name,
-    category, severity, decision, pattern, exclude_pattern, remediation,
-    builtin, enabled, priority, create_time, update_time, deleted)
-VALUES (
-    1000300006,
-    'shell_chmod_777',
-    'chmod 777 requires approval',
-    'chmod 777 grants full permissions to all users, security risk',
-    'ShellExecuteTool',
-    'command',
-    'shell_execution',
-    'MEDIUM',
-    'NEEDS_APPROVAL',
-    '(?i)chmod\s+(777|a\+rwx|o\+rwx)',
-    NULL,
-    'Please confirm if full permissions for all users are truly needed',
-    TRUE, TRUE, 30,
-    NOW(), NOW(), 0
-)
-ON DUPLICATE KEY UPDATE rule_id=VALUES(rule_id), name=VALUES(name), description=VALUES(description), tool_name=VALUES(tool_name), param_name=VALUES(param_name), category=VALUES(category), severity=VALUES(severity), decision=VALUES(decision), pattern=VALUES(pattern), exclude_pattern=VALUES(exclude_pattern), remediation=VALUES(remediation), builtin=VALUES(builtin), enabled=VALUES(enabled), priority=VALUES(priority), update_time=VALUES(update_time), deleted=VALUES(deleted);
+-- Security rules are managed by ToolGuardRuleSeedService (Java) as single source of truth.
+-- Removed 6 legacy SQL rules. Their superset is registered in ToolGuardRuleSeedService.buildBuiltinRules() with correct tool names.

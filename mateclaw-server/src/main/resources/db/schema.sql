@@ -357,6 +357,9 @@ CREATE TABLE IF NOT EXISTS mate_tool_guard_config (
     denied_tools_json    TEXT,
     file_guard_enabled   BOOLEAN      NOT NULL DEFAULT TRUE,
     sensitive_paths_json TEXT,
+    audit_enabled        BOOLEAN      NOT NULL DEFAULT TRUE,
+    audit_min_severity   VARCHAR(16)  NOT NULL DEFAULT 'INFO',
+    audit_retention_days INT          NOT NULL DEFAULT 90,
     create_time          DATETIME     NOT NULL,
     update_time          DATETIME     NOT NULL
 );

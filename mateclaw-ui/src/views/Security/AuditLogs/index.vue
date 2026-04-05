@@ -7,6 +7,46 @@
       </div>
     </div>
 
+    <!-- Audit Config -->
+    <div class="config-panel">
+      <h3 class="config-title">{{ t('security.audit.config.title') }}</h3>
+      <div class="config-grid">
+        <div class="config-item">
+          <div class="config-label-row">
+            <label>{{ t('security.audit.config.enabled') }}</label>
+            <label class="toggle-switch">
+              <input type="checkbox" v-model="auditConfig.auditEnabled" @change="saveAuditConfig" />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <p class="config-hint">{{ t('security.audit.config.enabledHint') }}</p>
+        </div>
+        <div class="config-item">
+          <label>{{ t('security.audit.config.minSeverity') }}</label>
+          <select v-model="auditConfig.auditMinSeverity" @change="saveAuditConfig" class="filter-select">
+            <option value="INFO">{{ t('security.severity.INFO') }}</option>
+            <option value="LOW">{{ t('security.severity.LOW') }}</option>
+            <option value="MEDIUM">{{ t('security.severity.MEDIUM') }}</option>
+            <option value="HIGH">{{ t('security.severity.HIGH') }}</option>
+            <option value="CRITICAL">{{ t('security.severity.CRITICAL') }}</option>
+          </select>
+          <p class="config-hint">{{ t('security.audit.config.minSeverityHint') }}</p>
+        </div>
+        <div class="config-item">
+          <label>{{ t('security.audit.config.retentionDays') }}</label>
+          <input
+            type="number"
+            v-model.number="auditConfig.auditRetentionDays"
+            @change="saveAuditConfig"
+            class="filter-input retention-input"
+            min="0"
+            max="3650"
+          />
+          <p class="config-hint">{{ t('security.audit.config.retentionDaysHint') }}</p>
+        </div>
+      </div>
+    </div>
+
     <!-- Stats Cards -->
     <div class="stats-grid">
       <div class="stat-card">
@@ -148,6 +188,37 @@ const auditTotal = ref(0)
 const auditFilters = reactive({ toolName: '', decision: '' })
 const expandedRows = ref(new Set<number>())
 
+// Audit config
+const auditConfig = reactive({
+  auditEnabled: true,
+  auditMinSeverity: 'INFO',
+  auditRetentionDays: 90,
+})
+
+async function loadAuditConfig() {
+  try {
+    const res: any = await securityApi.getGuardConfig()
+    const data = res.data || {}
+    auditConfig.auditEnabled = data.auditEnabled ?? true
+    auditConfig.auditMinSeverity = data.auditMinSeverity || 'INFO'
+    auditConfig.auditRetentionDays = data.auditRetentionDays ?? 90
+  } catch {
+    // ignore
+  }
+}
+
+async function saveAuditConfig() {
+  try {
+    await securityApi.updateGuardConfig({
+      auditEnabled: auditConfig.auditEnabled,
+      auditMinSeverity: auditConfig.auditMinSeverity,
+      auditRetentionDays: auditConfig.auditRetentionDays,
+    })
+  } catch {
+    // ignore
+  }
+}
+
 async function loadAuditLogs() {
   try {
     const params: any = {
@@ -183,7 +254,7 @@ function toggleExpand(id: number) {
 }
 
 onMounted(async () => {
-  await Promise.all([loadAuditLogs(), loadAuditStats()])
+  await Promise.all([loadAuditConfig(), loadAuditLogs(), loadAuditStats()])
 })
 </script>
 
@@ -192,6 +263,95 @@ onMounted(async () => {
 </style>
 
 <style scoped>
+/* Config Panel */
+.config-panel {
+  background: var(--mc-bg-elevated);
+  border: 1px solid var(--mc-border-light);
+  border-radius: 10px;
+  padding: 20px;
+  margin-bottom: 24px;
+}
+
+.config-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--mc-text-primary);
+  margin: 0 0 16px;
+}
+
+.config-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+
+.config-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.config-item label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--mc-text-primary);
+}
+
+.config-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.config-hint {
+  font-size: 11px;
+  color: var(--mc-text-tertiary);
+  margin: 0;
+}
+
+.retention-input {
+  max-width: 120px;
+}
+
+/* Toggle Switch */
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 22px;
+}
+
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+
+.toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background: var(--mc-border);
+  border-radius: 22px;
+  transition: 0.2s;
+}
+
+.toggle-slider::before {
+  content: '';
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  left: 3px;
+  bottom: 3px;
+  background: white;
+  border-radius: 50%;
+  transition: 0.2s;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background: var(--mc-accent, #3b82f6);
+}
+
+.toggle-switch input:checked + .toggle-slider::before {
+  transform: translateX(18px);
+}
+
 /* Stats Grid */
 .stats-grid {
   display: grid;

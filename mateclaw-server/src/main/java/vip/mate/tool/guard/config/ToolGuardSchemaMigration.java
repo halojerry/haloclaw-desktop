@@ -24,6 +24,7 @@ public class ToolGuardSchemaMigration implements ApplicationRunner {
         createGuardRuleTable();
         createGuardConfigTable();
         createAuditLogTable();
+        migrateGuardConfigAuditColumns();
     }
 
     private void createGuardRuleTable() {
@@ -106,6 +107,16 @@ public class ToolGuardSchemaMigration implements ApplicationRunner {
         } catch (Exception e) {
             log.warn("[ToolGuardSchemaMigration] Failed to create audit log table: {}", e.getMessage());
         }
+    }
+
+    /**
+     * 为 mate_tool_guard_config 补充审计配置列（向已有表兼容迁移）
+     */
+    private void migrateGuardConfigAuditColumns() {
+        safeExecute("ALTER TABLE mate_tool_guard_config ADD COLUMN audit_enabled BOOLEAN NOT NULL DEFAULT TRUE");
+        safeExecute("ALTER TABLE mate_tool_guard_config ADD COLUMN audit_min_severity VARCHAR(16) NOT NULL DEFAULT 'INFO'");
+        safeExecute("ALTER TABLE mate_tool_guard_config ADD COLUMN audit_retention_days INT NOT NULL DEFAULT 90");
+        log.info("[ToolGuardSchemaMigration] audit columns migration done");
     }
 
     private void safeExecute(String sql) {
