@@ -42,6 +42,22 @@ http.interceptors.response.use(
   }
 )
 
+// ==================== 受保护文件访问 ====================
+
+/**
+ * 使用 JWT 认证 fetch 受保护文件，返回 Blob。
+ * 用于 <img> 和 <a download> 无法自动携带 Authorization header 的场景。
+ * 使用原生 fetch（不走 axios），避免 baseURL 拼接和 R<T> 拦截器干扰。
+ */
+export async function fetchAuthenticatedBlob(fileUrl: string): Promise<Blob> {
+  const token = localStorage.getItem('token')
+  const headers: Record<string, string> = {}
+  if (token) headers.Authorization = `Bearer ${token}`
+  const response = await fetch(fileUrl, { headers })
+  if (!response.ok) throw new Error(`Fetch failed: ${response.status}`)
+  return response.blob()
+}
+
 // ==================== Auth ====================
 export const authApi = {
   login: (data: { username: string; password: string }) =>

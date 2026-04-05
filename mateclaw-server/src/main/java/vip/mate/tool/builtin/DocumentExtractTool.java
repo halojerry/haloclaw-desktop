@@ -153,31 +153,197 @@ public class DocumentExtractTool {
     // ==================== PDF 提取链 ====================
 
     private ExtractedContent extractPdf(Path path, String options, List<String> attempts) throws Exception {
+        String bestContent = null;
+        String bestMethod = null;
+
         // 1. 尝试 pdftotext
+        long t0 = System.currentTimeMillis();
         String content = tryPdftotext(path, options);
         if (content != null && !content.isBlank()) {
-            attempts.add("pdftotext: 成功");
-            return new ExtractedContent(content, "pdftotext", estimatePages(content));
+            int pages = estimatePages(content);
+            if (!needsOcr(content, pages)) {
+                attempts.add("pdftotext: 成功 (" + (System.currentTimeMillis() - t0) + "ms)");
+                return new ExtractedContent(content, "pdftotext", pages);
+            }
+            attempts.add("pdftotext: 文本过少 (每页 " + charsPerPage(content, pages) + " 字符)，可能是扫描版");
+            bestContent = content;
+            bestMethod = "pdftotext";
+        } else {
+            attempts.add("pdftotext: 失败或不可用");
         }
-        attempts.add("pdftotext: 失败或不可用");
 
         // 2. 尝试 Python pdfplumber/pypdf
+        long t1 = System.currentTimeMillis();
         content = tryPythonPdfExtractor(path, options);
         if (content != null && !content.isBlank()) {
-            attempts.add("python_pdf: 成功");
-            return new ExtractedContent(content, "python_pdfplumber", estimatePages(content));
+            int pages = estimatePages(content);
+            if (!needsOcr(content, pages)) {
+                attempts.add("python_pdf: 成功 (" + (System.currentTimeMillis() - t1) + "ms)");
+                return new ExtractedContent(content, "python_pdfplumber", pages);
+            }
+            attempts.add("python_pdf: 文本过少");
+            if (bestContent == null || content.strip().length() > bestContent.strip().length()) {
+                bestContent = content;
+                bestMethod = "python_pdfplumber";
+            }
+        } else {
+            attempts.add("python_pdf: 失败或不可用");
         }
-        attempts.add("python_pdf: 失败或不可用");
 
-        // 3. Java 实现（基于 Apache PDFBox 逻辑，纯 Java）
+        // 3. Java 实现
+        long t2 = System.currentTimeMillis();
         content = extractPdfWithJava(path);
         if (content != null && !content.isBlank()) {
-            attempts.add("java_pdf: 成功");
-            return new ExtractedContent(content, "java_pdfbox", estimatePages(content));
+            int pages = estimatePages(content);
+            if (!needsOcr(content, pages)) {
+                attempts.add("java_pdf: 成功 (" + (System.currentTimeMillis() - t2) + "ms)");
+                return new ExtractedContent(content, "java_pdfbox", pages);
+            }
+            attempts.add("java_pdf: 文本过少");
+            if (bestContent == null || content.strip().length() > bestContent.strip().length()) {
+                bestContent = content;
+                bestMethod = "java_pdfbox";
+            }
+        } else {
+            attempts.add("java_pdf: 失败");
         }
-        attempts.add("java_pdf: 失败");
 
-        throw new Exception("所有 PDF 提取方法都失败");
+        // 4. OCR fallback（扫描版/照片型 PDF）
+        log.info("[DocumentExtract] 文本提取不足，尝试 OCR: {}", path.getFileName());
+        long t3 = System.currentTimeMillis();
+        content = tryOcrExtract(path, attempts);
+        if (content != null && !content.isBlank()) {
+            attempts.add("ocr_tesseract: 成功 (" + (System.currentTimeMillis() - t3) + "ms)");
+            return new ExtractedContent(content, "ocr_tesseract", estimatePages(content));
+        }
+        // attempts 已由 tryOcrExtract 内部记录失败原因
+
+        // 返回之前级别的部分结果（如果有）
+        if (bestContent != null) {
+            log.warn("[DocumentExtract] OCR 不可用，返回部分文本结果: method={}, length={}",
+                    bestMethod, bestContent.strip().length());
+            return new ExtractedContent(bestContent, bestMethod + "_partial", estimatePages(bestContent));
+        }
+
+        throw new Exception("所有 PDF 提取方法都失败（包括 OCR）");
+    }
+
+    /**
+     * 判断提取到的文本是否太少、需要尝试 OCR。
+     * 基于字符密度（每页平均字符数）而非总字符数，避免误判短票据/证书类 PDF。
+     */
+    private boolean needsOcr(String text, int estimatedPages) {
+        if (text == null || text.isBlank()) return true;
+        String stripped = text.strip();
+        if (stripped.length() < 20) return true;
+        double perPage = charsPerPage(stripped, estimatedPages);
+        // 正常文本 PDF 每页至少数百字符；每页不到 30 字符大概率是扫描版
+        return perPage < 30;
+    }
+
+    private double charsPerPage(String text, int pages) {
+        return (double) text.strip().length() / Math.max(1, pages);
+    }
+
+    /**
+     * OCR 提取：pdftoppm 转图片 + tesseract 识别文字。
+     * 仅依赖 Poppler（pdftoppm）和 tesseract 系统命令，不引入新 Python 依赖。
+     */
+    private String tryOcrExtract(Path pdfPath, List<String> attempts) {
+        Path tempDir = null;
+        try {
+            long startTime = System.currentTimeMillis();
+            tempDir = Files.createTempDirectory("mc_ocr_");
+
+            // Step 1: 检查 pdftoppm 可用性
+            try {
+                executeCommand(List.of("pdftoppm", "-v"));
+            } catch (Exception e) {
+                attempts.add("ocr: pdftoppm 不可用，无法将 PDF 转为图片");
+                log.warn("[DocumentExtract] OCR: pdftoppm 不可用 - {}", e.getMessage());
+                return null;
+            }
+
+            // Step 2: PDF → PNG（200dpi，足够 OCR 但不过大）
+            long t1 = System.currentTimeMillis();
+            String pagePrefix = tempDir.resolve("page").toString();
+            executeCommand(List.of("pdftoppm", "-png", "-r", "200",
+                    pdfPath.toString(), pagePrefix));
+            log.info("[DocumentExtract] OCR: pdftoppm 耗时 {}ms", System.currentTimeMillis() - t1);
+
+            File[] pageFiles = tempDir.toFile().listFiles((dir, name) -> name.endsWith(".png"));
+            if (pageFiles == null || pageFiles.length == 0) {
+                attempts.add("ocr: pdftoppm 未生成图片");
+                return null;
+            }
+            java.util.Arrays.sort(pageFiles);
+
+            // Step 3: 检查 tesseract 可用性并探测语言包
+            String langParam;
+            try {
+                String langOutput = executeCommand(List.of("tesseract", "--list-langs"));
+                langParam = buildTesseractLangParam(langOutput);
+                log.info("[DocumentExtract] OCR: tesseract 可用，语言参数: {}", langParam);
+            } catch (Exception e) {
+                attempts.add("ocr: tesseract 未安装");
+                log.warn("[DocumentExtract] OCR: tesseract 不可用 - {}", e.getMessage());
+                return null;
+            }
+
+            // Step 4: 对每页执行 OCR
+            long t2 = System.currentTimeMillis();
+            StringBuilder ocrText = new StringBuilder();
+            for (int i = 0; i < pageFiles.length; i++) {
+                ocrText.append("--- Page ").append(i + 1).append(" ---\n");
+                try {
+                    List<String> cmd = new ArrayList<>();
+                    cmd.add("tesseract");
+                    cmd.add(pageFiles[i].getAbsolutePath());
+                    cmd.add("stdout");
+                    if (langParam != null) {
+                        cmd.add("-l");
+                        cmd.add(langParam);
+                    }
+                    String pageText = executeCommand(cmd);
+                    ocrText.append(pageText != null ? pageText.trim() : "").append("\n\n");
+                } catch (Exception e) {
+                    log.warn("[DocumentExtract] OCR: 页面 {} tesseract 失败: {}", i + 1, e.getMessage());
+                    ocrText.append("[OCR 失败]\n\n");
+                }
+            }
+            log.info("[DocumentExtract] OCR: tesseract 处理 {} 页耗时 {}ms，总耗时 {}ms",
+                    pageFiles.length, System.currentTimeMillis() - t2, System.currentTimeMillis() - startTime);
+
+            String result = ocrText.toString().trim();
+            return result.isEmpty() ? null : result;
+
+        } catch (Exception e) {
+            log.warn("[DocumentExtract] OCR 失败: {}", e.getMessage());
+            attempts.add("ocr: 异常 - " + e.getMessage());
+            return null;
+        } finally {
+            if (tempDir != null) {
+                try {
+                    Files.walk(tempDir)
+                            .sorted(java.util.Comparator.reverseOrder())
+                            .forEach(f -> { try { Files.delete(f); } catch (IOException ignored) {} });
+                } catch (IOException ignored) {}
+            }
+        }
+    }
+
+    /**
+     * 从 tesseract --list-langs 输出中构建最优语言参数。
+     * 优先 eng+chi_sim，缺中文则只用 eng，都缺则返回 null（用 tesseract 默认）。
+     */
+    private String buildTesseractLangParam(String listLangsOutput) {
+        if (listLangsOutput == null) return null;
+        boolean hasEng = listLangsOutput.contains("eng");
+        boolean hasChiSim = listLangsOutput.contains("chi_sim");
+        if (hasEng && hasChiSim) return "eng+chi_sim";
+        if (hasEng) return "eng";
+        if (hasChiSim) return "chi_sim";
+        return null;  // 用 tesseract 默认语言
     }
 
     private String tryPdftotext(Path path, String options) {
@@ -551,7 +717,7 @@ public class DocumentExtractTool {
         }
     }
 
-    private String tryPythonScript(String script, String filePath) {
+    private String tryPythonScript(String script, String... args) {
         Path tempScript = null;
         try {
             tempScript = Files.createTempFile("extract", ".py");
@@ -559,7 +725,10 @@ public class DocumentExtractTool {
 
             // Windows 通常只有 python，没有 python3
             String pythonCmd = IS_WINDOWS ? "python" : "python3";
-            List<String> command = List.of(pythonCmd, tempScript.toString(), filePath);
+            List<String> command = new ArrayList<>();
+            command.add(pythonCmd);
+            command.add(tempScript.toString());
+            for (String arg : args) command.add(arg);
             return executeCommand(command);
         } catch (Exception e) {
             log.debug("Python 脚本失败: {}", e.getMessage());

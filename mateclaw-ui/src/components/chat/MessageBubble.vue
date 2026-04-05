@@ -214,21 +214,19 @@
             class="message-attachment-image"
           >
             <img
-              :src="attachment.url"
+              :src="getDisplayUrl(attachment)"
               :alt="attachment.name"
               loading="lazy"
-              @click="openAttachment(attachment.url)"
+              @click="openImage(getDisplayUrl(attachment))"
             />
             <span class="message-attachment-image__name">{{ attachment.name }}</span>
           </div>
-          <a
+          <button
             v-for="attachment in fileAttachments"
             :key="attachment.storedName"
             class="message-attachment"
-            :href="attachment.url"
-            target="_blank"
-            rel="noreferrer"
-            :download="attachment.name"
+            type="button"
+            @click="downloadFile(attachment)"
           >
             <svg class="message-attachment__icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
@@ -236,7 +234,7 @@
             </svg>
             <span class="message-attachment__name">{{ attachment.name }}</span>
             <span class="message-attachment__meta">{{ formatFileSize(attachment.size) }}</span>
-          </a>
+          </button>
         </div>
       </div>
 
@@ -288,12 +286,14 @@
 import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMarkdownRenderer } from '@/composables/useMarkdownRenderer'
+import { useAuthenticatedAttachment } from '@/composables/useAuthenticatedAttachment'
 import TypingCursor from './TypingCursor.vue'
 import type { Message, ChatAttachment, ToolCallMeta, PlanMeta } from '@/types'
 import type { ChatErrorInfo } from '@/types/chatError'
 
 const { renderMarkdown } = useMarkdownRenderer()
 const { t } = useI18n()
+const { blobUrls, loadAllImages, downloadFile, openImage, getDisplayUrl, revokeAll } = useAuthenticatedAttachment()
 
 interface Props {
   message: Message
@@ -456,12 +456,18 @@ function copyMessage() {
 
 onBeforeUnmount(() => {
   if (copyTimer) clearTimeout(copyTimer)
+  revokeAll()
 })
 
 // --- 附件 ---
 const attachments = computed(() => props.message.attachments || [])
 const imageAttachments = computed(() => attachments.value.filter(a => a.contentType?.startsWith('image/')))
 const fileAttachments = computed(() => attachments.value.filter(a => !a.contentType?.startsWith('image/')))
+
+// 增量加载图片附件的鉴权 blob URL（watch 覆盖首次 + 后续变化）
+watch(imageAttachments, (atts) => {
+  if (atts.length > 0) loadAllImages(atts)
+}, { immediate: true })
 
 // --- 时间 ---
 const formattedTime = computed(() => {
@@ -478,9 +484,7 @@ const formatFileSize = (size: number) => {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`
 }
 
-const openAttachment = (url: string) => {
-  window.open(url, '_blank')
-}
+// openAttachment 已由 useAuthenticatedAttachment 的 openImage / downloadFile 替代
 
 // --- 执行过程面板 ---
 const executionExpanded = ref(false)
@@ -1331,6 +1335,10 @@ watch(isGenerating, (generating) => {
   background: rgba(255, 255, 255, 0.14);
   color: inherit;
   text-decoration: none;
+  border: none;
+  font: inherit;
+  cursor: pointer;
+  width: 100%;
 }
 
 .user-bubble .message-attachment {

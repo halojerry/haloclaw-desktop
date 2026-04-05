@@ -1029,6 +1029,19 @@ function normalizeMessage(raw: Message): Message {
   // interrupted 是合法的历史状态（interrupt-with-followup），不映射为 stopped
   if (!msg.status) msg.status = 'completed'
 
+  // 从 file-type contentParts 恢复 attachments（历史消息 API 不返回单独的 attachments 字段）
+  const fileParts = msg.contentParts.filter(p => p.type === 'file' && p.fileUrl)
+  if (fileParts.length > 0 && (!msg.attachments || msg.attachments.length === 0)) {
+    msg.attachments = fileParts.map(p => ({
+      name: p.fileName || 'unknown',
+      size: typeof p.fileSize === 'number' ? p.fileSize : Number(p.fileSize) || 0,
+      url: p.fileUrl!,
+      storedName: p.storedName || '',
+      path: p.path || '',
+      contentType: p.contentType,
+    }))
+  }
+
   // 从持久化的 [错误] 文本重建 errorInfo，使刷新后也能显示错误卡片
   if (msg.role === 'assistant' && !msg.errorInfo) {
     const text = msg.content || msg.contentParts?.find(p => p.type === 'text')?.text || ''
