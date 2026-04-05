@@ -15,7 +15,7 @@
         <transition name="fade">
           <div v-if="!sidebarCollapsed" class="logo-text">
             <span class="logo-name">Mate<span class="logo-name-highlight">Claw</span></span>
-            <span class="logo-version">v1.0.0</span>
+            <span class="logo-version">v{{ appVersion }}</span>
           </div>
         </transition>
         <button
@@ -112,6 +112,7 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useThemeStore } from '@/stores/useThemeStore'
+import { version as appVersion } from '../../../package.json'
 import type { ThemeMode } from '@/stores/useThemeStore'
 
 const router = useRouter()
