@@ -131,6 +131,30 @@ public class MemoryRecallService {
             return Collections.emptyList();
         }
 
+        LocalDateTime now = LocalDateTime.now();
+
+        // 前置硬门控：不满足的直接跳过评分
+        int minRecallCount = properties.getEmergenceMinRecallCount();
+        int minUniqueQueries = properties.getEmergenceMinUniqueQueries();
+        int maxAgeDays = properties.getEmergenceMaxAgeDays();
+
+        candidates = candidates.stream().filter(e -> {
+            // 门控 1：最少召回次数
+            if (e.getRecallCount() < minRecallCount) return false;
+            // 门控 2：最少不同查询数
+            if (parseQueryHashes(e.getQueryHashes()).size() < minUniqueQueries) return false;
+            // 门控 3：最大年龄
+            if (maxAgeDays > 0 && e.getCreateTime() != null) {
+                long ageDays = ChronoUnit.DAYS.between(e.getCreateTime(), now);
+                if (ageDays > maxAgeDays) return false;
+            }
+            return true;
+        }).collect(Collectors.toCollection(ArrayList::new));
+
+        if (candidates.isEmpty()) {
+            return Collections.emptyList();
+        }
+
         // 归一化参数
         int maxRecallCount = candidates.stream()
                 .mapToInt(MemoryRecallEntity::getRecallCount)
@@ -139,7 +163,6 @@ public class MemoryRecallService {
                 .mapToInt(e -> parseQueryHashes(e.getQueryHashes()).size())
                 .max().orElse(1);
 
-        LocalDateTime now = LocalDateTime.now();
         double halfLifeDays = 7.0;
         double threshold = properties.getEmergenceScoreThreshold();
 
@@ -191,6 +214,59 @@ public class MemoryRecallService {
                 new LambdaUpdateWrapper<MemoryRecallEntity>()
                         .in(MemoryRecallEntity::getId, ids)
                         .set(MemoryRecallEntity::getPromoted, true));
+    }
+
+    // ==================== 查询方法（供 API 使用） ====================
+
+    /**
+     * 获取 Agent 的 dreaming 统计摘要
+     */
+    public Map<String, Object> getDreamingStatus(Long agentId) {
+        long total = recallMapper.selectCount(
+                new LambdaQueryWrapper<MemoryRecallEntity>()
+                        .eq(MemoryRecallEntity::getAgentId, agentId)
+                        .eq(MemoryRecallEntity::getDeleted, 0));
+        long promoted = recallMapper.selectCount(
+                new LambdaQueryWrapper<MemoryRecallEntity>()
+                        .eq(MemoryRecallEntity::getAgentId, agentId)
+                        .eq(MemoryRecallEntity::getPromoted, true)
+                        .eq(MemoryRecallEntity::getDeleted, 0));
+        long pending = total - promoted;
+
+        Map<String, Object> status = new LinkedHashMap<>();
+        status.put("dreamingEnabled", properties.isDreamingEnabled());
+        status.put("dreamingCron", properties.getDreamingCron());
+        status.put("scoreThreshold", properties.getEmergenceScoreThreshold());
+        status.put("minRecallCount", properties.getEmergenceMinRecallCount());
+        status.put("minUniqueQueries", properties.getEmergenceMinUniqueQueries());
+        status.put("totalRecallEntries", total);
+        status.put("promotedCount", promoted);
+        status.put("pendingCandidates", pending);
+        return status;
+    }
+
+    /**
+     * 获取带详情的候选列表（供 API 使用）
+     */
+    public List<Map<String, Object>> listCandidatesWithDetails(Long agentId) {
+        List<MemoryRecallEntity> candidates = recallMapper.selectList(
+                new LambdaQueryWrapper<MemoryRecallEntity>()
+                        .eq(MemoryRecallEntity::getAgentId, agentId)
+                        .eq(MemoryRecallEntity::getDeleted, 0)
+                        .orderByDesc(MemoryRecallEntity::getScore));
+
+        return candidates.stream().map(c -> {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("filename", c.getFilename());
+            item.put("score", c.getScore());
+            item.put("recallCount", c.getRecallCount());
+            item.put("dailyCount", c.getDailyCount());
+            item.put("queryCount", parseQueryHashes(c.getQueryHashes()).size());
+            item.put("promoted", c.getPromoted());
+            item.put("lastRecalledAt", c.getLastRecalledAt());
+            item.put("snippetPreview", c.getSnippetPreview());
+            return item;
+        }).collect(Collectors.toList());
     }
 
     // ==================== 内部工具方法 ====================

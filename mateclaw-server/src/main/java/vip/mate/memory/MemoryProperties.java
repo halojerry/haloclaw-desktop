@@ -49,4 +49,13 @@ public class MemoryProperties {
 
     /** 记忆召回评分阈值，低于此分的候选不进入 LLM 整合 */
     private double emergenceScoreThreshold = 0.4;
+
+    /** 最少召回次数门控（低于此值直接跳过评分） */
+    private int emergenceMinRecallCount = 3;
+
+    /** 最少不同查询数门控（低于此值直接跳过评分） */
+    private int emergenceMinUniqueQueries = 2;
+
+    /** 候选最大年龄（天），超过此值不参与评分。0=不限 */
+    private int emergenceMaxAgeDays = 30;
 }

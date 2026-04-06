@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
+import vip.mate.memory.service.MemoryRecallTracker;
 import vip.mate.workspace.document.WorkspaceFileService;
 import vip.mate.workspace.document.model.WorkspaceFileEntity;
 
@@ -26,6 +27,7 @@ import java.util.List;
 public class WorkspaceMemoryTool {
 
     private final WorkspaceFileService workspaceFileService;
+    private final MemoryRecallTracker memoryRecallTracker;
 
     @Tool(description = """
             列出指定 Agent 的数据库工作区记忆文件。
@@ -84,12 +86,16 @@ public class WorkspaceMemoryTool {
             return error("工作区文件不存在: " + filename);
         }
 
+        // 追踪主动检索信号（比被动注入更强的"真实需要"指标）
+        String content = file.getContent() != null ? file.getContent() : "";
+        memoryRecallTracker.trackActiveRetrieval(agentId, filename, content);
+
         JSONObject result = new JSONObject();
         result.set("agentId", agentId);
         result.set("filename", file.getFilename());
         result.set("enabled", Boolean.TRUE.equals(file.getEnabled()));
         result.set("fileSize", file.getFileSize());
-        result.set("content", file.getContent() != null ? file.getContent() : "");
+        result.set("content", content);
         result.set("updateTime", file.getUpdateTime() != null ? file.getUpdateTime().toString() : null);
         return JSONUtil.toJsonPrettyStr(result);
     }

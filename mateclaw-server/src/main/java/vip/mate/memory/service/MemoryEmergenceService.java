@@ -158,11 +158,69 @@ public class MemoryEmergenceService {
                         }
                         log.info("[Memory] Promoted {}/{} recall candidates for agent={}",
                                 promotedIds.size(), scoredCandidates.size(), agentId);
+
+                        // 写入 DREAMS.md 整合日记
+                        appendDreamDiary(agentId, scoredCandidates, promotedIds);
                     }
                 }
             }
         } catch (Exception e) {
             log.warn("[Memory] Failed to parse/apply emergence result for agent={}: {}", agentId, e.getMessage());
+        }
+    }
+
+    /**
+     * 将本轮 dreaming 结果追加到 DREAMS.md 整合日记
+     */
+    private void appendDreamDiary(Long agentId, List<MemoryRecallEntity> allCandidates, List<Long> promotedIds) {
+        try {
+            java.util.Set<Long> promotedSet = new java.util.HashSet<>(promotedIds);
+
+            List<MemoryRecallEntity> promoted = allCandidates.stream()
+                    .filter(c -> promotedSet.contains(c.getId()))
+                    .sorted(java.util.Comparator.comparingDouble(MemoryRecallEntity::getScore).reversed())
+                    .toList();
+            List<MemoryRecallEntity> kept = allCandidates.stream()
+                    .filter(c -> !promotedSet.contains(c.getId()))
+                    .sorted(java.util.Comparator.comparingDouble(MemoryRecallEntity::getScore).reversed())
+                    .toList();
+
+            String timestamp = java.time.LocalDateTime.now()
+                    .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
+
+            StringBuilder diary = new StringBuilder();
+            diary.append("## ").append(timestamp).append(" Dreaming\n\n");
+            diary.append(String.format("**评分候选**: %d 条（阈值 %.1f）\n",
+                    allCandidates.size(), properties.getEmergenceScoreThreshold()));
+            diary.append(String.format("**实际整合**: %d 条\n\n", promoted.size()));
+
+            if (!promoted.isEmpty()) {
+                diary.append("### 已整合\n");
+                for (MemoryRecallEntity c : promoted) {
+                    diary.append(String.format("- `%s` (score=%.2f, recalls=%d)\n",
+                            c.getFilename(), c.getScore(), c.getRecallCount()));
+                }
+                diary.append("\n");
+            }
+
+            if (!kept.isEmpty()) {
+                diary.append("### 未整合（保留下轮）\n");
+                for (MemoryRecallEntity c : kept) {
+                    diary.append(String.format("- `%s` (score=%.2f, recalls=%d)\n",
+                            c.getFilename(), c.getScore(), c.getRecallCount()));
+                }
+                diary.append("\n");
+            }
+
+            // 读取现有 DREAMS.md，追加到开头（最新在最上面）
+            String existing = readFileContentSafe(agentId, "DREAMS.md");
+            String newContent = existing.isBlank()
+                    ? "# Dreaming 整合日记\n\n" + diary
+                    : existing + "\n" + diary;
+            workspaceFileService.saveFile(agentId, "DREAMS.md", newContent);
+            log.info("[Memory] Dream diary appended for agent={}", agentId);
+        } catch (Exception e) {
+            log.warn("[Memory] Failed to write dream diary for agent={}: {}", agentId, e.getMessage());
         }
     }
 

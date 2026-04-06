@@ -1,5 +1,6 @@
 package vip.mate.memory.scheduler;
 
+import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -9,6 +10,7 @@ import vip.mate.agent.model.AgentEntity;
 import vip.mate.memory.MemoryProperties;
 import vip.mate.memory.service.MemoryEmergenceService;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -27,6 +29,10 @@ public class DreamingScheduler {
     private final AgentService agentService;
     private final MemoryEmergenceService emergenceService;
     private final MemoryProperties properties;
+
+    /** 上次 dreaming 执行时间（供状态 API 读取） */
+    @Getter
+    private volatile LocalDateTime lastRunTime;
 
     @Scheduled(cron = "${mate.memory.dreaming-cron:0 0 3 * * ?}")
     public void runDreaming() {
@@ -55,6 +61,7 @@ public class DreamingScheduler {
             }
         }
 
+        lastRunTime = LocalDateTime.now();
         log.info("[Dreaming] Cycle completed: {} succeeded, {} failed", success, failed);
     }
 }

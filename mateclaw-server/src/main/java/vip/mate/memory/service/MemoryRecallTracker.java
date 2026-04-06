@@ -134,6 +134,24 @@ public class MemoryRecallTracker {
                 .replaceAll("^-|-$", "");
     }
 
+    /**
+     * 追踪 Agent 通过 WorkspaceMemoryTool 主动读取文件的信号。
+     * 这是比被动注入更强的"真实需要"指标。
+     * 使用固定 queryHash 以区分主动检索和被动注入。
+     */
+    @Async
+    public void trackActiveRetrieval(Long agentId, String filename, String content) {
+        try {
+            if (agentId == null || filename == null || content == null || content.isBlank()) {
+                return;
+            }
+            recallService.recordRecall(agentId, filename, content, "__active_read__");
+            log.debug("[MemoryRecall] Tracked active retrieval: agent={}, file={}", agentId, filename);
+        } catch (Exception e) {
+            log.warn("[MemoryRecall] Failed to track active retrieval for agent={}: {}", agentId, e.getMessage());
+        }
+    }
+
     private String sha256Short(String text) {
         if (text == null || text.isBlank()) return null;
         try {
