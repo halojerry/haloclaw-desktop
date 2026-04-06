@@ -139,6 +139,11 @@ public class NodeStreamingChatHelper {
                 || msg.contains("Too Many Requests") || msg.contains("engine_overloaded")) {
             return ErrorType.RATE_LIMIT;
         }
+        // Client errors (400 Bad Request — unsupported format, invalid params, etc.) — NOT retryable
+        if (msg.contains("400") || msg.contains("Bad Request")
+                || msg.contains("invalid_request_error") || msg.contains("unsupported")) {
+            return ErrorType.CLIENT_ERROR;
+        }
         // Server errors
         if (msg.contains("500") || msg.contains("502") || msg.contains("503") || msg.contains("504")
                 || msg.contains("APITimeoutError") || msg.contains("APIConnectionError")
@@ -183,6 +188,10 @@ public class NodeStreamingChatHelper {
                 }
                 // AUTH: 不重试
                 if (lastResult.errorType() == ErrorType.AUTH_ERROR) {
+                    return lastResult;
+                }
+                // CLIENT_ERROR (400 Bad Request): 不重试（参数/格式错误重试也不会变）
+                if (lastResult.errorType() == ErrorType.CLIENT_ERROR) {
                     return lastResult;
                 }
                 // 成功或不可重试
@@ -394,6 +403,13 @@ public class NodeStreamingChatHelper {
                         conversationId, phase, errorType);
             }
 
+            // Client error (400): 不重试（参数/格式错误重试也不会变）
+            if (errorType == ErrorType.CLIENT_ERROR) {
+                log.error("[{}] Client error (400), not retrying: {}", phase, error.getMessage());
+                return buildErrorResultWithType("请求参数错误: " + extractUserFriendlyError(error),
+                        conversationId, phase, errorType);
+            }
+
             // Rate limit / Server error: 重试
             if (attempt < MAX_RETRIES && (errorType == ErrorType.RATE_LIMIT || errorType == ErrorType.SERVER_ERROR)) {
                 log.warn("[{}] Retryable error (attempt {}/{}, type={}): {}",
@@ -542,6 +558,8 @@ public class NodeStreamingChatHelper {
         if (msg == null) return error.getClass().getSimpleName();
         // 对 Jackson 反序列化错误，提取关键信息
         if (msg.contains("engine_overloaded")) return "模型服务过载，请稍后重试";
+        if (msg.contains("unsupported image format") || msg.contains("unsupported")) return "不支持的文件格式（如 SVG），请使用 PNG/JPG 等光栅图片";
+        if (msg.contains("invalid_request_error") || msg.contains("400 Bad Request")) return "请求参数错误，请检查输入";
         if (msg.contains("rate_limit") || msg.contains("429")) return "请求频率过高，请稍后重试";
         if (msg.contains("timeout") || msg.contains("Timeout")) return "请求超时，请重试";
         if (msg.contains("502") || msg.contains("503") || msg.contains("504")) return "模型服务暂时不可用";
@@ -563,6 +581,8 @@ public class NodeStreamingChatHelper {
         PROMPT_TOO_LONG,
         /** 认证错误 */
         AUTH_ERROR,
+        /** 客户端错误 (400 Bad Request, 不支持的格式等) — 不应重试 */
+        CLIENT_ERROR,
         /** 其他未知错误 */
         UNKNOWN
     }

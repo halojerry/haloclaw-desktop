@@ -241,6 +241,12 @@ public abstract class BaseAgent {
             if (contentType == null || !contentType.startsWith("image/")) {
                 continue;
             }
+            // SVG 是 XML 文本，不是光栅图片，LLM multimodal API 不支持
+            if (contentType.contains("svg")) {
+                log.debug("[{}] Skipping SVG attachment (not supported by multimodal API): {}",
+                        agentName, part.getFileName());
+                continue;
+            }
             // 解析图片文件路径：先尝试原始 path，再尝试拼接工作目录
             Path imagePath = resolveImagePath(part.getPath());
             if (imagePath == null) {
