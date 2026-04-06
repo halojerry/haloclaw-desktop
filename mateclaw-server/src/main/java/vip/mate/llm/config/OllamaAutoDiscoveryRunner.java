@@ -14,6 +14,9 @@ import vip.mate.llm.model.TestResult;
 import vip.mate.llm.service.ModelConfigService;
 import vip.mate.llm.service.ModelDiscoveryService;
 
+import vip.mate.llm.service.ModelProviderService;
+
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -36,6 +39,7 @@ public class OllamaAutoDiscoveryRunner implements ApplicationRunner {
 
     private final ModelDiscoveryService modelDiscoveryService;
     private final ModelConfigService modelConfigService;
+    private final ModelProviderService modelProviderService;
 
     @Async
     @Override
@@ -82,8 +86,32 @@ public class OllamaAutoDiscoveryRunner implements ApplicationRunner {
                     log.info("Ollama: auto-enabled model '{}'", modelTag);
                 }
             }
+            // Auto-activate first Ollama model if no valid default exists
+            tryAutoActivateOllamaModel();
         } catch (Exception e) {
             log.debug("Ollama auto-discovery skipped: {}", e.getMessage());
+        }
+    }
+
+    private void tryAutoActivateOllamaModel() {
+        List<ModelConfigEntity> ollamaModels = modelConfigService.listModelsByProvider(OLLAMA_PROVIDER_ID);
+        List<ModelConfigEntity> enabledModels = ollamaModels.stream()
+                .filter(m -> Boolean.TRUE.equals(m.getEnabled()))
+                .toList();
+        if (enabledModels.isEmpty()) {
+            return;
+        }
+        boolean hasValidDefault;
+        try {
+            ModelConfigEntity current = modelConfigService.getDefaultModel();
+            hasValidDefault = modelProviderService.isProviderAvailable(current.getProvider());
+        } catch (Exception e) {
+            hasValidDefault = false;
+        }
+        if (!hasValidDefault) {
+            ModelConfigEntity first = enabledModels.get(0);
+            modelConfigService.setDefaultModel(OLLAMA_PROVIDER_ID, first.getModelName());
+            log.info("Ollama: auto-activated default model '{}'", first.getModelName());
         }
     }
 }
