@@ -302,6 +302,24 @@ body {
   border-radius: 0;
 }
 
+/* ECharts chart block */
+.markdown-body .echarts-block {
+  margin: 14px 0;
+  border-radius: 12px;
+  overflow: hidden;
+  min-height: 350px;
+  width: 100%;
+  background: var(--mc-bg-elevated);
+  border: 1px solid var(--mc-border-light);
+}
+.markdown-body .echarts-block.echarts-error {
+  min-height: auto;
+  padding: 16px;
+  text-align: center;
+  color: var(--mc-text-tertiary);
+  font-size: 13px;
+}
+
 /* highlight.js token colors (One Dark inspired — works on dark bg) */
 .hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-literal { color: #c678dd; }
 .hljs-string, .hljs-attr { color: #98c379; }

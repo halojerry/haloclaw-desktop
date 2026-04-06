@@ -205,6 +205,7 @@ import type { Conversation, Agent, ModelConfig, ProviderInfo, ActiveModelsInfo, 
 import MessageList from '@/components/chat/MessageList.vue'
 import ChatInput from '@/components/chat/ChatInput.vue'
 import StreamLoadingBar from '@/components/chat/StreamLoadingBar.vue'
+import { useEChartsRenderer } from '@/composables/useEChartsRenderer'
 
 // ============ 移动端状态 ============
 const isMobile = ref(false)
@@ -353,6 +354,10 @@ async function collectFilesFromEntries(dirEntries: FileSystemDirectoryEntry[]): 
 const messageListRef = ref<InstanceType<typeof MessageList> | null>(null)
 const chatInputRef = ref<InstanceType<typeof ChatInput> | null>(null)
 
+// ECharts: extract DOM element from MessageList component ref
+const echartsContainerRef = computed(() => messageListRef.value?.$el as HTMLElement | null)
+const { startObserving: startECharts, dispose: disposeECharts } = useEChartsRenderer(echartsContainerRef)
+
 // 使用 useChat composable
 const {
   messages,
@@ -463,6 +468,7 @@ const eligibleModels = computed(() => {
 // ============ 生命周期 ============
 onMounted(async () => {
   document.addEventListener('click', handleCodeCopy)
+  startECharts()
   mobileQuery = window.matchMedia('(max-width: 768px)')
   handleMobileChange(mobileQuery)
   mobileQuery.addEventListener('change', handleMobileChange)
@@ -472,6 +478,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleCodeCopy)
+  disposeECharts()
   mobileQuery?.removeEventListener('change', handleMobileChange)
   stopChatGeneration()
   // 释放所有附件的 ObjectURL，防止内存泄漏

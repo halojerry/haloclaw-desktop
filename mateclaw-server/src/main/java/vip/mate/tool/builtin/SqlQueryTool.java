@@ -2,7 +2,6 @@ package vip.mate.tool.builtin;
 
 import cn.hutool.json.JSONArray;
 import cn.hutool.json.JSONObject;
-import cn.hutool.json.JSONUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
@@ -11,6 +10,7 @@ import org.springframework.stereotype.Component;
 import vip.mate.datasource.model.DatasourceEntity;
 import vip.mate.datasource.service.DatasourceConnectionManager;
 import vip.mate.datasource.service.DatasourceService;
+import vip.mate.datasource.service.EChartsOptionBuilder;
 import vip.mate.datasource.service.SqlValidationService;
 
 import java.sql.*;
@@ -22,6 +22,7 @@ import java.util.List;
  * <p>
  * 仅允许 SELECT 语句。自动注入 LIMIT 保护。
  * 查询超时 30 秒。结果格式化为 Markdown 表格或 JSON。
+ * 自动分析数据特征并生成 ECharts 图表配置。
  *
  * @author MateClaw Team
  */
@@ -43,6 +44,7 @@ public class SqlQueryTool {
             仅允许 SELECT 语句，禁止 INSERT/UPDATE/DELETE/DROP 等写操作。
             如果 SQL 没有 LIMIT 子句会自动添加 LIMIT 500。
             返回查询结果（Markdown 表格或 JSON 格式）以及行数和执行耗时。
+            如果数据适合可视化，会自动附带一个 echarts 图表配置代码块，前端会自动渲染为交互式图表。
             """)
     public String execute_sql(
             @ToolParam(description = "目标数据源 ID") Long datasourceId,
@@ -135,6 +137,12 @@ public class SqlQueryTool {
 
         if (rows.size() >= MAX_ROWS) {
             sb.append("\n\n> 结果已截断至 ").append(MAX_ROWS).append(" 行，实际数据可能更多。");
+        }
+
+        // 自动生成 ECharts 图表配置
+        String chartOption = EChartsOptionBuilder.tryBuild(columns, rows);
+        if (chartOption != null) {
+            sb.append("\n\n```echarts\n").append(chartOption).append("\n```");
         }
 
         return sb.toString();

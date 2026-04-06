@@ -42,6 +42,13 @@ const customRenderer = {
   code({ text, lang }: { type: string; raw: string; text: string; lang?: string }): string {
     const rawCode = text || ''
     const infoStr = (lang || '').split(/\s/)[0]
+
+    // ECharts chart block: render as a placeholder div
+    if (infoStr === 'echarts') {
+      const encodedOption = encodeURIComponent(rawCode)
+      return `<div class="echarts-block" data-echarts-option="${encodedOption}"></div>`
+    }
+
     const detectedLang = extractLang(infoStr)
     const hasLanguage = detectedLang && hljs.getLanguage(detectedLang)
 
@@ -81,7 +88,7 @@ const markedInstance = new Marked({
 
 // 配置 DOMPurify — 允许 Markdown + 代码块复制按钮的标签和属性
 const purifyConfig = {
-  ADD_ATTR: ['target', 'rel', 'class', 'data-code', 'type', 'viewBox', 'fill', 'stroke', 'stroke-width', 'd', 'x', 'y', 'width', 'height', 'rx', 'ry', 'points'],
+  ADD_ATTR: ['target', 'rel', 'class', 'data-code', 'data-echarts-option', 'type', 'viewBox', 'fill', 'stroke', 'stroke-width', 'd', 'x', 'y', 'width', 'height', 'rx', 'ry', 'points'],
   ADD_TAGS: ['input', 'button', 'svg', 'path', 'rect', 'polyline', 'circle', 'line', 'span'],
 }
 
