@@ -275,6 +275,13 @@ public class ChannelManager {
                     info.put("connectionState", aca.getConnectionState().get().name());
                     info.put("lastError", aca.getLastError());
                     info.put("reconnectAttempts", aca.backoff.getAttempts());
+                    long lastEventMs = aca.getLastEventTimeMs().get();
+                    info.put("lastEventTime", lastEventMs > 0
+                            ? java.time.Instant.ofEpochMilli(lastEventMs).toString() : null);
+                    long silentMs = System.currentTimeMillis() - lastEventMs;
+                    info.put("healthStatus", silentMs > 3600_000 ? "stale"
+                            : aca.getConnectionState().get() == AbstractChannelAdapter.ConnectionState.ERROR ? "error"
+                            : "healthy");
                 } else {
                     info.put("connectionState", adapter.isRunning() ? "CONNECTED" : "DISCONNECTED");
                     info.put("lastError", null);

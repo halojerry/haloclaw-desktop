@@ -2,6 +2,7 @@ package vip.mate.agent.graph;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.Prompt;
@@ -139,6 +140,12 @@ public class NodeStreamingChatHelper {
                 || msg.contains("Too Many Requests") || msg.contains("engine_overloaded")) {
             return ErrorType.RATE_LIMIT;
         }
+        // Thinking block errors (Anthropic: old thinking blocks cannot be modified)
+        if (msg.contains("thinking blocks cannot be modified")
+                || msg.contains("thinking content is not allowed")
+                || msg.contains("thinking block")) {
+            return ErrorType.THINKING_BLOCK_ERROR;
+        }
         // Client errors (400 Bad Request — unsupported format, invalid params, etc.) — NOT retryable
         if (msg.contains("400") || msg.contains("Bad Request")
                 || msg.contains("invalid_request_error") || msg.contains("unsupported")) {
@@ -193,6 +200,15 @@ public class NodeStreamingChatHelper {
                 // CLIENT_ERROR (400 Bad Request): 不重试（参数/格式错误重试也不会变）
                 if (lastResult.errorType() == ErrorType.CLIENT_ERROR) {
                     return lastResult;
+                }
+                // THINKING_BLOCK_ERROR: 剥离旧 thinking 块后单次重试
+                if (lastResult.errorType() == ErrorType.THINKING_BLOCK_ERROR && attempt == 0) {
+                    log.warn("[{}] Thinking block error detected, stripping old thinking and retrying once", phase);
+                    prompt = stripThinkingFromPrompt(prompt);
+                    continue; // 重试一次
+                }
+                if (lastResult.errorType() == ErrorType.THINKING_BLOCK_ERROR) {
+                    return lastResult; // 已经重试过了
                 }
                 // 成功或不可重试
                 if (lastResult.errorMessage() == null || lastResult.errorType() == ErrorType.NONE) {
@@ -498,6 +514,49 @@ public class NodeStreamingChatHelper {
     }
 
     /** 构建纯错误 StreamResult（无任何内容） */
+    /**
+     * 从 Prompt 中剥离旧 AssistantMessage 的 thinking/reasoningContent metadata。
+     * 保留最新一条 AssistantMessage 的 thinking（可能是模型需要的签名）。
+     */
+    private Prompt stripThinkingFromPrompt(Prompt prompt) {
+        List<Message> messages = prompt.getInstructions();
+        // 找最后一个 AssistantMessage
+        int lastAssistantIdx = -1;
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            if (messages.get(i) instanceof AssistantMessage) {
+                lastAssistantIdx = i;
+                break;
+            }
+        }
+        List<Message> cleaned = new ArrayList<>();
+        for (int i = 0; i < messages.size(); i++) {
+            Message msg = messages.get(i);
+            if (msg instanceof AssistantMessage am && i != lastAssistantIdx) {
+                Map<String, Object> meta = am.getMetadata();
+                if (meta != null && meta.containsKey("reasoningContent")) {
+                    // 用 builder 重建 AssistantMessage，去掉 reasoningContent
+                    Map<String, Object> cleanMeta = new java.util.HashMap<>(meta);
+                    cleanMeta.remove("reasoningContent");
+                    AssistantMessage.Builder builder = AssistantMessage.builder()
+                            .content(am.getText())
+                            .properties(cleanMeta);
+                    if (am.getToolCalls() != null && !am.getToolCalls().isEmpty()) {
+                        builder.toolCalls(am.getToolCalls());
+                    }
+                    if (am.getMedia() != null && !am.getMedia().isEmpty()) {
+                        builder.media(am.getMedia());
+                    }
+                    cleaned.add(builder.build());
+                    continue;
+                }
+            }
+            cleaned.add(msg);
+        }
+        log.info("[ThinkingRecovery] Stripped thinking blocks from {} messages, last assistant at index {}",
+                messages.size(), lastAssistantIdx);
+        return new Prompt(cleaned, prompt.getOptions());
+    }
+
     private StreamResult buildErrorResult(String errorMsg, String conversationId, String phase) {
         log.error("[{}] Building error result for conversation {}: {}", phase, conversationId, errorMsg);
         if (streamTracker != null && conversationId != null) {
@@ -583,6 +642,8 @@ public class NodeStreamingChatHelper {
         AUTH_ERROR,
         /** 客户端错误 (400 Bad Request, 不支持的格式等) — 不应重试 */
         CLIENT_ERROR,
+        /** Thinking 块错误（旧消息中的 thinking block 不可修改）— 可剥离后单次重试 */
+        THINKING_BLOCK_ERROR,
         /** 其他未知错误 */
         UNKNOWN
     }

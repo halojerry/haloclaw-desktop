@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
+import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
@@ -111,8 +112,37 @@ public class ConversationWindowManager {
         }
 
         int splitPoint = messages.size() - preserveCount;
-        List<Message> oldMessages = messages.subList(0, splitPoint);
+        List<Message> oldMessages = new ArrayList<>(messages.subList(0, splitPoint)); // 可变副本
         List<Message> recentMessages = messages.subList(splitPoint, messages.size());
+
+        // ═══ Phase 1: Soft Trim — 裁剪工具结果（head+tail），避免不必要的 LLM 摘要 ═══
+        int softTrimmed = softTrimToolResults(oldMessages);
+        if (softTrimmed > 0) {
+            int afterTrimTokens = TokenEstimator.estimateTokens(oldMessages) + TokenEstimator.estimateTokens(recentMessages);
+            log.info("[ConversationWindow] Soft trim: {} tool results trimmed, tokens now={}, budget={}",
+                    softTrimmed, afterTrimTokens, historyBudget);
+            if (afterTrimTokens <= historyBudget) {
+                // Soft trim 够了，跳过 LLM 摘要
+                List<Message> result = new ArrayList<>(oldMessages);
+                result.addAll(recentMessages);
+                return result;
+            }
+        }
+
+        // ═══ Phase 2: Hard Clear — 替换所有旧工具结果为占位符 ═══
+        int hardCleared = hardClearToolResults(oldMessages);
+        if (hardCleared > 0) {
+            int afterClearTokens = TokenEstimator.estimateTokens(oldMessages) + TokenEstimator.estimateTokens(recentMessages);
+            log.info("[ConversationWindow] Hard clear: {} tool results replaced with placeholder, tokens now={}, budget={}",
+                    hardCleared, afterClearTokens, historyBudget);
+            if (afterClearTokens <= historyBudget) {
+                List<Message> result = new ArrayList<>(oldMessages);
+                result.addAll(recentMessages);
+                return result;
+            }
+        }
+
+        // ═══ Phase 3: LLM 摘要（原有逻辑，仅在 Phase 1+2 不够时执行） ═══
 
         // 检查缓存
         String cacheKey = conversationId + ":" + oldMessages.size();
@@ -152,6 +182,57 @@ public class ConversationWindowManager {
         }
 
         return result;
+    }
+
+    // ==================== 工具结果裁剪 ====================
+
+    /**
+     * Soft trim：对工具结果做 head+tail 裁剪（保留首尾各 200 字符）。
+     * @return 裁剪的工具结果条数
+     */
+    private int softTrimToolResults(List<Message> messages) {
+        int trimmed = 0;
+        for (int i = 0; i < messages.size(); i++) {
+            if (messages.get(i) instanceof ToolResponseMessage trm) {
+                List<ToolResponseMessage.ToolResponse> newResponses = new ArrayList<>();
+                boolean changed = false;
+                for (ToolResponseMessage.ToolResponse r : trm.getResponses()) {
+                    String data = r.responseData();
+                    if (data != null && data.length() > 500) {
+                        String head = data.substring(0, 200);
+                        String tail = data.substring(data.length() - 200);
+                        newResponses.add(new ToolResponseMessage.ToolResponse(
+                                r.id(), r.name(), head + "\n...[trimmed " + data.length() + " chars]...\n" + tail));
+                        changed = true;
+                    } else {
+                        newResponses.add(r);
+                    }
+                }
+                if (changed) {
+                    messages.set(i, ToolResponseMessage.builder().responses(newResponses).build());
+                    trimmed++;
+                }
+            }
+        }
+        return trimmed;
+    }
+
+    /**
+     * Hard clear：将所有工具结果替换为占位符。
+     * @return 替换的工具结果条数
+     */
+    private int hardClearToolResults(List<Message> messages) {
+        int cleared = 0;
+        for (int i = 0; i < messages.size(); i++) {
+            if (messages.get(i) instanceof ToolResponseMessage trm) {
+                List<ToolResponseMessage.ToolResponse> placeholders = trm.getResponses().stream()
+                        .map(r -> new ToolResponseMessage.ToolResponse(r.id(), r.name(), "[tool result removed]"))
+                        .toList();
+                messages.set(i, ToolResponseMessage.builder().responses(placeholders).build());
+                cleared++;
+            }
+        }
+        return cleared;
     }
 
     /**

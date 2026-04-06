@@ -66,10 +66,16 @@ public class ToolExecutionExecutor {
         int rawLen = result.length();
         // 检测尾部 2000 字符是否含错误模式
         String tailRegion = result.substring(Math.max(0, rawLen - 2000));
-        double headRatio = ERROR_TAIL_PATTERN.matcher(tailRegion).find() ? 0.2 : 0.4;
+        boolean errorDetected = ERROR_TAIL_PATTERN.matcher(tailRegion).find();
+        double headRatio = errorDetected ? 0.2 : 0.4;
+        if (errorDetected) {
+            log.info("[ToolExecutor] Error pattern detected in tail, preserving 80% tail (headRatio=0.2)");
+        }
         int headLen = (int) (maxChars * headRatio);
         int tailLen = maxChars - headLen - 80;
         if (tailLen <= 0) tailLen = maxChars / 2;
+        log.info("[ToolExecutor] Truncated tool result from {} to {} chars (headRatio={})",
+                rawLen, maxChars, headRatio);
         return result.substring(0, headLen)
                 + "\n\n... [结果已截断，原始 " + rawLen + " 字符，保留首尾关键片段] ...\n\n"
                 + result.substring(rawLen - tailLen);

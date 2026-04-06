@@ -14,6 +14,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -54,6 +55,10 @@ public abstract class AbstractChannelAdapter implements ChannelAdapter {
 
     @Getter
     protected volatile String lastError;
+
+    /** 最近一次收到消息或连接成功的时间（用于健康监控） */
+    @Getter
+    protected final AtomicLong lastEventTimeMs = new AtomicLong(System.currentTimeMillis());
 
     protected ExponentialBackoff backoff = new ExponentialBackoff();
 
@@ -154,6 +159,7 @@ public abstract class AbstractChannelAdapter implements ChannelAdapter {
     protected void onReconnectSuccess() {
         backoff.reset();
         connectionState.set(ConnectionState.CONNECTED);
+        lastEventTimeMs.set(System.currentTimeMillis());
         lastError = null;
         log.info("[{}] Reconnected successfully: {} (backoff reset)",
                 getChannelType(), channelEntity.getName());
@@ -176,6 +182,7 @@ public abstract class AbstractChannelAdapter implements ChannelAdapter {
             try {
                 doStart();
                 connectionState.set(ConnectionState.CONNECTED);
+                lastEventTimeMs.set(System.currentTimeMillis());
                 lastError = null;
                 backoff.reset();
                 log.info("[{}] Channel started successfully: {}", getChannelType(), channelEntity.getName());
@@ -219,6 +226,8 @@ public abstract class AbstractChannelAdapter implements ChannelAdapter {
 
     @Override
     public void onMessage(ChannelMessage message) {
+        lastEventTimeMs.set(System.currentTimeMillis());
+
         // Bot 前缀过滤
         if (!shouldProcess(message)) {
             log.debug("[{}] Message filtered (bot prefix not matched): {}", getChannelType(), message.getContent());
