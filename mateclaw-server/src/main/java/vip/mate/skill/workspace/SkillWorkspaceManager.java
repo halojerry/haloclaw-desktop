@@ -346,11 +346,28 @@ public class SkillWorkspaceManager {
 
                 Path targetDir = resolveConventionPath(skillName);
                 if (Files.exists(targetDir)) {
-                    log.debug("Bundled skill '{}' already exists at {}, skipping", skillName, targetDir);
+                    // 版本比对：classpath version > workspace version 时覆盖升级
+                    String bundledVersion = parseFrontmatterVersion(skillMdResource);
+                    Path workspaceMd = targetDir.resolve("SKILL.md");
+                    String workspaceVersion = Files.exists(workspaceMd)
+                            ? parseFrontmatterVersionFromPath(workspaceMd) : null;
+
+                    if (bundledVersion != null && isNewerVersion(bundledVersion, workspaceVersion)) {
+                        log.info("Bundled skill '{}' version {} > workspace version {}, upgrading",
+                                skillName, bundledVersion, workspaceVersion);
+                        archiveWorkspace(skillName);
+                        syncSingleBundledSkill(resolver, bundledPath, skillName, targetDir);
+                        synced.add(skillName);
+                        eventPublisher.publishEvent(
+                                new SkillWorkspaceEvent(skillName, SkillWorkspaceEvent.Type.CREATED, targetDir));
+                    } else {
+                        log.debug("Bundled skill '{}' workspace version is current (bundled={}, workspace={}), skipping",
+                                skillName, bundledVersion, workspaceVersion);
+                    }
                     continue;
                 }
 
-                // 同步该技能目录下的所有文件
+                // 目录不存在：首次同步
                 syncSingleBundledSkill(resolver, bundledPath, skillName, targetDir);
                 synced.add(skillName);
                 log.info("Synced bundled skill '{}' → {}", skillName, targetDir);
@@ -430,6 +447,74 @@ public class SkillWorkspaceManager {
             return uri.substring(start + prefix.length());
         } catch (IOException e) {
             return null;
+        }
+    }
+
+    // ==================== 版本比对 ====================
+
+    private static final java.util.regex.Pattern VERSION_PATTERN =
+            java.util.regex.Pattern.compile("^version:\\s*[\"']?([^\"'\\s]+)[\"']?", java.util.regex.Pattern.MULTILINE);
+
+    /**
+     * 从 classpath Resource (SKILL.md) 的 frontmatter 中提取 version 字段
+     */
+    private String parseFrontmatterVersion(Resource resource) {
+        try (InputStream is = resource.getInputStream()) {
+            String content = new String(is.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            return extractVersionFromContent(content);
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    /**
+     * 从文件路径 (SKILL.md) 的 frontmatter 中提取 version 字段
+     */
+    private String parseFrontmatterVersionFromPath(Path path) {
+        try {
+            String content = Files.readString(path);
+            return extractVersionFromContent(content);
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    private String extractVersionFromContent(String content) {
+        // 只读 frontmatter 部分（--- 之间）
+        if (!content.startsWith("---")) return null;
+        int endIdx = content.indexOf("---", 3);
+        if (endIdx < 0) return null;
+        String frontmatter = content.substring(0, endIdx);
+        var matcher = VERSION_PATTERN.matcher(frontmatter);
+        return matcher.find() ? matcher.group(1) : null;
+    }
+
+    /**
+     * 语义版本比较：newer > older 返回 true
+     * <p>
+     * 例：1.1.0 > 1.0.0, 2.0.0 > 1.9.9, older=null 视为 0.0.0
+     */
+    static boolean isNewerVersion(String newer, String older) {
+        if (newer == null) return false;
+        if (older == null) return true;
+
+        String[] nParts = newer.split("\\.");
+        String[] oParts = older.split("\\.");
+        int len = Math.max(nParts.length, oParts.length);
+        for (int i = 0; i < len; i++) {
+            int n = i < nParts.length ? parseSegment(nParts[i]) : 0;
+            int o = i < oParts.length ? parseSegment(oParts[i]) : 0;
+            if (n > o) return true;
+            if (n < o) return false;
+        }
+        return false; // equal
+    }
+
+    private static int parseSegment(String s) {
+        try {
+            return Integer.parseInt(s.trim());
+        } catch (NumberFormatException e) {
+            return 0;
         }
     }
 

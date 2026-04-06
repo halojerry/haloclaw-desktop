@@ -13,7 +13,10 @@ import java.util.List;
  * Skill 工作区启动初始化
  * <p>
  * 1. 确保 workspace root 目录存在
- * 2. 将 classpath 下预置技能同步到 workspace（仅首次，不覆盖）
+ * 2. 将 classpath 下预置技能同步到 workspace
+ *    - 首次：创建并同步
+ *    - 后续：比对 SKILL.md frontmatter 中的 version 字段，
+ *      bundled version 更高时归档旧版本并覆盖升级
  * <p>
  * Order(195) — 在 DatabaseBootstrapRunner(200) 之前执行。
  *

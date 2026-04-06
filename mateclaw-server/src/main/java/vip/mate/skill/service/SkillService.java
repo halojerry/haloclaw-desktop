@@ -153,6 +153,9 @@ public class SkillService {
             skillMapper.updateById(existing);
             log.info("Updated builtin skill (limited): {}", existing.getName());
 
+            // builtin skill 也同步 workspace SKILL.md
+            syncSkillContentToWorkspace(existing);
+
             // 刷新 runtime cache
             if (runtimeService != null) {
                 runtimeService.refreshActiveSkills();

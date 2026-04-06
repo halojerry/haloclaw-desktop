@@ -1,5 +1,6 @@
 ---
 name: sql_query
+version: "1.1.0"
 description: "当用户提出数据查询需求（如'查数'、'查一下订单量'、'有多少用户'、'帮我跑个SQL'等），使用数据源工具发现表结构，生成并执行只读 SQL 查询。"
 dependencies:
   tools:

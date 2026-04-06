@@ -114,11 +114,19 @@ public class SkillController {
         return R.ok(skillRuntimeService.resolveAllSkillsStatus());
     }
 
-    @Operation(summary = "刷新 active skills 缓存")
+    @Operation(summary = "刷新 active skills 缓存，resync=true 时同步内置技能到 workspace")
     @PostMapping("/runtime/refresh")
-    public R<Map<String, Object>> refreshRuntime() {
+    public R<Map<String, Object>> refreshRuntime(
+            @RequestParam(defaultValue = "false") boolean resync) {
+        List<String> resynced = List.of();
+        if (resync) {
+            resynced = workspaceManager.syncBundledSkills();
+        }
         List<ResolvedSkill> skills = skillRuntimeService.refreshActiveSkills();
-        return R.ok(Map.of("count", skills.size(), "message", "Active skills refreshed"));
+        return R.ok(Map.of(
+                "count", skills.size(),
+                "message", resync ? "Active skills refreshed with workspace resync" : "Active skills refreshed",
+                "resynced", resynced));
     }
 
     // ==================== Workspace API ====================
