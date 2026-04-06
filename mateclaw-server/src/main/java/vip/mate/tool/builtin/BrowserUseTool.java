@@ -282,6 +282,12 @@ public class BrowserUseTool {
             return ok("No browser running");
         }
 
+        // 取消空闲看门狗（避免 stop 后定时任务继续运行）
+        ScheduledFuture<?> watchdog = session.idleWatchdog;
+        if (watchdog != null && !watchdog.isDone()) {
+            watchdog.cancel(false);
+        }
+
         String cdpUrl = session.cdpUrl;
         boolean wasCdp = session.connectedViaCdp;
         session.close(); // Only closes Browser/Context, not the shared Playwright instance
@@ -624,15 +630,26 @@ public class BrowserUseTool {
     }
 
     private void scheduleIdleCheck(String sessionKey) {
-        scheduler.scheduleAtFixedRate(() -> {
-            BrowserSession session = sessions.get(sessionKey);
-            if (session == null) return;
-            long idleMinutes = (System.currentTimeMillis() - session.lastActivity) / 60_000;
+        BrowserSession session = sessions.get(sessionKey);
+        if (session == null) return;
+
+        // 取消已有的看门狗（防止 start→stop→start 导致多个定时任务累积）
+        ScheduledFuture<?> existing = session.idleWatchdog;
+        if (existing != null && !existing.isDone()) {
+            existing.cancel(false);
+        }
+
+        ScheduledFuture<?> future = scheduler.scheduleAtFixedRate(() -> {
+            BrowserSession s = sessions.get(sessionKey);
+            if (s == null) return;
+            long idleMinutes = (System.currentTimeMillis() - s.lastActivity) / 60_000;
             if (idleMinutes >= IDLE_TIMEOUT_MINUTES) {
                 log.info("[BrowserUse] Idle timeout ({}min), stopping session: {}", idleMinutes, sessionKey);
                 doStop(sessionKey);
             }
         }, IDLE_TIMEOUT_MINUTES, 5, TimeUnit.MINUTES);
+
+        session.idleWatchdog = future;
     }
 
     @PreDestroy
@@ -691,6 +708,8 @@ public class BrowserUseTool {
         final boolean connectedViaCdp;
         final String cdpUrl;
         volatile long lastActivity;
+        /** 空闲看门狗定时任务（stop 时取消，避免泄漏） */
+        volatile ScheduledFuture<?> idleWatchdog;
 
         BrowserSession(Browser browser, BrowserContext context, Page page,
                         boolean headed, boolean connectedViaCdp, String cdpUrl) {
