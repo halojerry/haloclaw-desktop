@@ -73,7 +73,7 @@ public class ObservationProcessor {
         String head = text.substring(0, headLen);
         String tail = text.substring(originalLen - tailLen);
 
-        log.debug("[ObservationProcessor] Truncated observation from {} to {} chars", originalLen, maxLen);
+        log.info("[Observation] Truncated from {} to {} chars (limit={})", originalLen, head.length() + tail.length(), maxLen);
         return head + marker + tail;
     }
 

@@ -28,7 +28,7 @@ import static vip.mate.agent.graph.state.MateClawStateKeys.*;
 public class ReasoningDispatcher implements EdgeAction {
 
     /** LLM 调用次数的安全倍数上限（相对于 maxIterations） */
-    private static final int LLM_CALL_MULTIPLIER = 3;
+    private static final int LLM_CALL_MULTIPLIER = 5;
 
     @Override
     public String apply(OverAllState state) throws Exception {

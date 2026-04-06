@@ -93,9 +93,9 @@ mate:
   agent:
     graph:
       observation:
-        max-single-observation-chars: 4000
-        max-total-observation-chars: 12000
-        large-result-threshold: 3000
+        max-single-observation-chars: 8000
+        max-total-observation-chars: 24000
+        large-result-threshold: 6000
         min-rounds-for-summarize: 3
         head-ratio: 0.4
         truncation-marker: "\n\n... [内容已截断，共 %d 字符，保留前后关键片段] ...\n\n"

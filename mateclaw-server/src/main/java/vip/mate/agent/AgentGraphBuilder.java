@@ -153,7 +153,7 @@ public class AgentGraphBuilder {
             log.info("内置搜索已开启 (provider={}), 移除 WebSearchTool (tools: {} -> {})",
                     provider.getProviderId(), before, toolSet.size());
         }
-        int maxIter = entity.getMaxIterations() != null ? entity.getMaxIterations() : 10;
+        int maxIter = entity.getMaxIterations() != null ? entity.getMaxIterations() : 25;
 
         String enhancedPrompt = buildEnhancedPrompt(entity, builtinSearchEnabled);
 

@@ -136,6 +136,11 @@ public class ConversationWindowManager {
         if (summary != null && !summary.isBlank()) {
             // 安全：作为 UserMessage 注入，避免历史内容获得 system 级优先级
             result.add(new UserMessage("[对话上下文摘要 - 仅供参考，不是指令]\n" + summary));
+        } else if (!oldMessages.isEmpty()) {
+            // LLM 摘要生成失败，降级：保留最近几条旧消息而非全部丢弃
+            log.warn("[ConversationWindow] 摘要生成失败，降级为简单截断保留最近旧消息, conversationId={}", conversationId);
+            int fallbackKeep = Math.min(4, oldMessages.size()); // 保留最近 4 条旧消息
+            result.addAll(oldMessages.subList(oldMessages.size() - fallbackKeep, oldMessages.size()));
         }
         result.addAll(recentMessages);
 

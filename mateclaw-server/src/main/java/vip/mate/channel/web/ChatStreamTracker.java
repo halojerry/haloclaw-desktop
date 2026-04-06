@@ -32,7 +32,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class ChatStreamTracker {
 
     /** buffer 最大事件数，超出后丢弃最早的 thinking_delta 事件以释放空间 */
-    private static final int MAX_BUFFER_SIZE = 8000;
+    private static final int MAX_BUFFER_SIZE = 16000;
 
     private final ObjectMapper objectMapper;
 
@@ -261,8 +261,8 @@ public class ChatStreamTracker {
             }
             state.subscribers.add(emitter);
         }
-        log.debug("Emitter attached to stream: {} (subscribers={})",
-                conversationId, state.subscribers.size());
+        log.info("[SSE] Client reconnected for conversation={}, replaying {} buffered events",
+                conversationId, state.buffer.size());
         return true;
     }
 
