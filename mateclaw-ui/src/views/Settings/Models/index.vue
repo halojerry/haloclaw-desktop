@@ -79,6 +79,8 @@
       @close="closeProviderModal"
       @save="onSaveProvider"
       @toggle-advanced="advancedOpen = !advancedOpen"
+      @oauth-login="handleOAuthLogin"
+      @oauth-revoke="handleOAuthRevoke"
     />
 
     <!-- Manage Models Modal -->
@@ -168,6 +170,8 @@ const {
   providerStatus,
   getProviderIcon,
   onIconError,
+  handleOAuthLogin,
+  handleOAuthRevoke,
 } = useProviders()
 
 const localProviders = computed(() => providers.value.filter(p => p.isLocal))

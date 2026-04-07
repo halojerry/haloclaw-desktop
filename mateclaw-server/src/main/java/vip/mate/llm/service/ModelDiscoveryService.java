@@ -122,6 +122,7 @@ public class ModelDiscoveryService {
             case DASHSCOPE_NATIVE -> fetchDashScopeModels(provider);
             case GEMINI_NATIVE -> fetchGeminiModels(provider);
             case ANTHROPIC_MESSAGES -> fetchAnthropicModels(provider);
+            case OPENAI_CHATGPT -> throw new MateClawException("ChatGPT OAuth provider 不支持模型发现");
         };
     }
 
@@ -213,6 +214,7 @@ public class ModelDiscoveryService {
             case DASHSCOPE_NATIVE -> sendDashScopeTestPrompt(provider, modelId);
             case GEMINI_NATIVE -> sendGeminiTestPrompt(provider, modelId);
             case ANTHROPIC_MESSAGES -> sendAnthropicTestPrompt(provider, modelId);
+            case OPENAI_CHATGPT -> throw new MateClawException("ChatGPT OAuth provider 不支持模型测试");
         };
     }
 

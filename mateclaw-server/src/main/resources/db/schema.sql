@@ -436,3 +436,13 @@ CREATE INDEX IF NOT EXISTS idx_memory_recall_candidates ON mate_memory_recall(ag
 -- 补充复合索引（高频查询优化）
 CREATE INDEX IF NOT EXISTS idx_message_conv_time ON mate_message(conversation_id, create_time);
 CREATE INDEX IF NOT EXISTS idx_workspace_file_agent_enabled ON mate_workspace_file(agent_id, enabled);
+
+-- ==================== OAuth 支持 ====================
+ALTER TABLE mate_model_provider ADD COLUMN IF NOT EXISTS auth_type VARCHAR(16) NOT NULL DEFAULT 'api_key';
+ALTER TABLE mate_model_provider ADD COLUMN IF NOT EXISTS oauth_access_token TEXT;
+ALTER TABLE mate_model_provider ADD COLUMN IF NOT EXISTS oauth_refresh_token TEXT;
+ALTER TABLE mate_model_provider ADD COLUMN IF NOT EXISTS oauth_expires_at BIGINT;
+ALTER TABLE mate_model_provider ADD COLUMN IF NOT EXISTS oauth_account_id VARCHAR(128);
+
+-- 清理 Codex 不支持的 ChatGPT OAuth 模型（gpt-4o, o3, o4-mini 在 Codex 模式下不可用）
+DELETE FROM mate_model_config WHERE provider = 'openai-chatgpt' AND model_name IN ('gpt-4o', 'o3', 'o4-mini');

@@ -184,6 +184,9 @@ public class ModelProviderService {
         dto.setApiKey(maskApiKey(provider.getApiKey()));
         dto.setBaseUrl(provider.getBaseUrl());
         dto.setGenerateKwargs(readJson(provider.getGenerateKwargs()));
+        dto.setAuthType(provider.getAuthType() != null ? provider.getAuthType() : "api_key");
+        dto.setOauthConnected(StringUtils.hasText(provider.getOauthAccessToken()));
+        dto.setOauthExpiresAt(provider.getOauthExpiresAt());
         List<ModelInfoDTO> builtinModels = new ArrayList<>();
         List<ModelInfoDTO> extraModels = new ArrayList<>();
         if (models != null) {
@@ -211,6 +214,11 @@ public class ModelProviderService {
         }
         if (Boolean.TRUE.equals(provider.getIsLocal())) {
             return true;
+        }
+
+        // OAuth 认证的 provider：检查 OAuth token 是否存在
+        if ("oauth".equals(provider.getAuthType())) {
+            return StringUtils.hasText(provider.getOauthAccessToken());
         }
 
         boolean hasBaseUrl = StringUtils.hasText(provider.getBaseUrl());

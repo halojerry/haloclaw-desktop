@@ -113,6 +113,7 @@ public class AgentGraphBuilder {
     private final vip.mate.config.ToolTimeoutProperties toolTimeoutProperties;
     private final WorkspaceFileService workspaceFileService;
     private final vip.mate.agent.context.ConversationWindowManager conversationWindowManager;
+    private final vip.mate.llm.chatgpt.ChatGPTResponsesClient chatGPTResponsesClient;
 
     /**
      * 根据 AgentEntity 构建完整的 Agent 实例
@@ -427,7 +428,8 @@ public class AgentGraphBuilder {
     private boolean supportsStateGraph(ModelProtocol protocol) {
         return protocol == ModelProtocol.DASHSCOPE_NATIVE
                 || protocol == ModelProtocol.OPENAI_COMPATIBLE
-                || protocol == ModelProtocol.ANTHROPIC_MESSAGES;
+                || protocol == ModelProtocol.ANTHROPIC_MESSAGES
+                || protocol == ModelProtocol.OPENAI_CHATGPT;
     }
 
     // ==================== 模型构建 ====================
@@ -447,6 +449,12 @@ public class AgentGraphBuilder {
                     .dashScopeApi(api)
                     .defaultOptions(options)
                     .build();
+        }
+
+        if (protocol == ModelProtocol.OPENAI_CHATGPT) {
+            Double temp = runtimeModel.getTemperature() != null ? runtimeModel.getTemperature() : 0.7;
+            return new vip.mate.llm.chatgpt.ChatGPTChatModel(
+                    chatGPTResponsesClient, runtimeModel.getModelName(), temp);
         }
 
         if (protocol == ModelProtocol.OPENAI_COMPATIBLE) {

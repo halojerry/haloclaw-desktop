@@ -114,6 +114,10 @@ INSERT INTO mate_model_provider (provider_id, name, api_key_prefix, chat_model, 
 VALUES ('volcengine', 'Volcano Engine', '', 'OpenAIChatModel', '', 'https://ark.cn-beijing.volces.com/api/v3', '{}', FALSE, FALSE, FALSE, TRUE, TRUE, TRUE, NOW(), NOW())
 ON DUPLICATE KEY UPDATE name=VALUES(name), api_key_prefix=VALUES(api_key_prefix), chat_model=VALUES(chat_model), api_key=VALUES(api_key), base_url=VALUES(base_url), generate_kwargs=VALUES(generate_kwargs), is_custom=VALUES(is_custom), is_local=VALUES(is_local), support_model_discovery=VALUES(support_model_discovery), support_connection_check=VALUES(support_connection_check), freeze_url=VALUES(freeze_url), require_api_key=VALUES(require_api_key), update_time=VALUES(update_time);
 
+INSERT INTO mate_model_provider (provider_id, name, api_key_prefix, chat_model, api_key, base_url, generate_kwargs, is_custom, is_local, support_model_discovery, support_connection_check, freeze_url, require_api_key, auth_type, create_time, update_time)
+VALUES ('openai-chatgpt', 'OpenAI ChatGPT (OAuth)', '', 'ChatGPTChatModel', '', 'https://chatgpt.com/backend-api', '{}', FALSE, FALSE, FALSE, FALSE, TRUE, FALSE, 'oauth', NOW(), NOW())
+ON DUPLICATE KEY UPDATE name=VALUES(name), chat_model=VALUES(chat_model), base_url=VALUES(base_url), auth_type=VALUES(auth_type), update_time=VALUES(update_time);
+
 -- ==================== Local model pre-configs (Ollama, disabled by default) ====================
 INSERT INTO mate_model_config (id, name, provider, model_name, description, temperature, max_tokens, top_p, builtin, enabled, is_default, create_time, update_time, deleted)
 VALUES (1000000300, 'Gemma 3', 'ollama', 'gemma3:latest', 'Google Gemma 3, lightweight and efficient for local inference', 0.7, 4096, 0.8, TRUE, FALSE, FALSE, NOW(), NOW(), 0)
@@ -241,7 +245,9 @@ VALUES
 (1000000233, 'Doubao 1.5 Vision Pro 32K', 'volcengine', 'doubao-1.5-vision-pro-32k', 'Doubao multimodal vision model', 0.7, 4096, 0.8, TRUE, TRUE, FALSE, NOW(), NOW(), 0),
 (1000000234, 'Doubao 1.5 Thinking Pro', 'volcengine', 'doubao-1.5-thinking-pro', 'Doubao deep reasoning model', 0.7, 4096, 0.8, TRUE, TRUE, FALSE, NOW(), NOW(), 0),
 (1000000235, 'Doubao 1.5 Thinking Lite', 'volcengine', 'doubao-1.5-thinking-lite', 'Doubao lite reasoning model', 0.7, 4096, 0.8, TRUE, TRUE, FALSE, NOW(), NOW(), 0),
-(1000000240, 'Kimi for Coding', 'kimi-code', 'kimi-for-coding', 'Kimi Code dedicated coding model', 0.2, 32768, 0.8, TRUE, TRUE, FALSE, NOW(), NOW(), 0)
+(1000000240, 'Kimi for Coding', 'kimi-code', 'kimi-for-coding', 'Kimi Code dedicated coding model', 0.2, 32768, 0.8, TRUE, TRUE, FALSE, NOW(), NOW(), 0),
+(1000000250, 'GPT-5.4', 'openai-chatgpt', 'gpt-5.4', 'ChatGPT Plus/Pro member model (OAuth login)', NULL, 128000, NULL, TRUE, TRUE, FALSE, NOW(), NOW(), 0),
+(1000000251, 'GPT-5.4 Mini', 'openai-chatgpt', 'gpt-5.4-mini', 'ChatGPT member lightweight model', NULL, 128000, NULL, TRUE, TRUE, FALSE, NOW(), NOW(), 0)
 ON DUPLICATE KEY UPDATE name=VALUES(name), provider=VALUES(provider), model_name=VALUES(model_name), description=VALUES(description), temperature=VALUES(temperature), max_tokens=VALUES(max_tokens), top_p=VALUES(top_p), builtin=VALUES(builtin), enabled=VALUES(enabled), is_default=VALUES(is_default), update_time=VALUES(update_time), deleted=VALUES(deleted);
 
 -- Default system settings

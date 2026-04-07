@@ -525,6 +525,9 @@ export interface ProviderInfo {
   apiKey?: string
   baseUrl?: string
   generateKwargs?: Record<string, unknown>
+  authType?: string
+  oauthConnected?: boolean
+  oauthExpiresAt?: number
 }
 
 export interface ActiveModelsInfo {

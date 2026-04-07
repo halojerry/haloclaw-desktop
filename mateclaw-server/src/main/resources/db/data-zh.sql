@@ -114,6 +114,10 @@ MERGE INTO mate_model_provider (provider_id, name, api_key_prefix, chat_model, a
 KEY (provider_id)
 VALUES ('volcengine', 'Volcano Engine (火山引擎)', '', 'OpenAIChatModel', '', 'https://ark.cn-beijing.volces.com/api/v3', '{}', FALSE, FALSE, FALSE, TRUE, TRUE, TRUE, NOW(), NOW());
 
+MERGE INTO mate_model_provider (provider_id, name, api_key_prefix, chat_model, api_key, base_url, generate_kwargs, is_custom, is_local, support_model_discovery, support_connection_check, freeze_url, require_api_key, auth_type, create_time, update_time)
+KEY (provider_id)
+VALUES ('openai-chatgpt', 'OpenAI ChatGPT (OAuth)', '', 'ChatGPTChatModel', '', 'https://chatgpt.com/backend-api', '{}', FALSE, FALSE, FALSE, FALSE, TRUE, FALSE, 'oauth', NOW(), NOW());
+
 -- ==================== 本地模型预配置（Ollama，默认禁用，用户拉取后启用） ====================
 MERGE INTO mate_model_config (id, name, provider, model_name, description, temperature, max_tokens, top_p, builtin, enabled, is_default, create_time, update_time, deleted)
 KEY (id)
@@ -246,7 +250,9 @@ MERGE INTO mate_model_config (id, name, provider, model_name, description, tempe
 (1000000233, 'Doubao 1.5 Vision Pro 32K', 'volcengine', 'doubao-1.5-vision-pro-32k', '豆包多模态视觉模型', 0.7, 4096, 0.8, TRUE, TRUE, FALSE, NOW(), NOW(), 0),
 (1000000234, 'Doubao 1.5 Thinking Pro', 'volcengine', 'doubao-1.5-thinking-pro', '豆包深度推理模型', 0.7, 4096, 0.8, TRUE, TRUE, FALSE, NOW(), NOW(), 0),
 (1000000235, 'Doubao 1.5 Thinking Lite', 'volcengine', 'doubao-1.5-thinking-lite', '豆包轻量推理模型', 0.7, 4096, 0.8, TRUE, TRUE, FALSE, NOW(), NOW(), 0),
-(1000000240, 'Kimi for Coding', 'kimi-code', 'kimi-for-coding', 'Kimi Code 专用编码模型', 0.2, 32768, 0.8, TRUE, TRUE, FALSE, NOW(), NOW(), 0);
+(1000000240, 'Kimi for Coding', 'kimi-code', 'kimi-for-coding', 'Kimi Code 专用编码模型', 0.2, 32768, 0.8, TRUE, TRUE, FALSE, NOW(), NOW(), 0),
+(1000000250, 'GPT-5.4', 'openai-chatgpt', 'gpt-5.4', 'ChatGPT Plus/Pro 会员模型（OAuth 登录）', NULL, 128000, NULL, TRUE, TRUE, FALSE, NOW(), NOW(), 0),
+(1000000251, 'GPT-5.4 Mini', 'openai-chatgpt', 'gpt-5.4-mini', 'ChatGPT 会员轻量模型', NULL, 128000, NULL, TRUE, TRUE, FALSE, NOW(), NOW(), 0);
 
 -- 默认系统设置
 MERGE INTO mate_system_setting (id, setting_key, setting_value, description, create_time, update_time)

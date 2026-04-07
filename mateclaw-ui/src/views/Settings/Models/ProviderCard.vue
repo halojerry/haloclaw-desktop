@@ -31,7 +31,14 @@
           {{ provider.baseUrl || t('settings.model.notSet') }}
         </span>
       </div>
-      <div class="info-row">
+      <div v-if="provider.authType === 'oauth'" class="info-row">
+        <span class="info-label">OAuth</span>
+        <span class="info-value">
+          <span v-if="provider.oauthConnected" class="oauth-card-badge connected">{{ t('settings.model.oauthConnected') }}</span>
+          <span v-else class="oauth-card-badge disconnected">{{ t('settings.model.oauthDisconnected') }}</span>
+        </span>
+      </div>
+      <div v-else class="info-row">
         <span class="info-label">{{ t('settings.model.apiKey') }}</span>
         <span class="info-value mono">{{ provider.apiKey || t('settings.model.notSet') }}</span>
       </div>
@@ -130,4 +137,7 @@ const { t } = useI18n()
 .connection-result { margin-top: 10px; padding: 8px 12px; border-radius: 8px; font-size: 12px; }
 .connection-result.success { background: var(--mc-primary-bg); color: var(--mc-primary); }
 .connection-result.error { background: var(--mc-danger-bg); color: var(--mc-danger); }
+.oauth-card-badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 6px; font-size: 12px; font-weight: 600; }
+.oauth-card-badge.connected { background: rgba(34, 197, 94, 0.12); color: #22c55e; }
+.oauth-card-badge.disconnected { background: rgba(156, 163, 175, 0.12); color: var(--mc-text-tertiary); }
 </style>

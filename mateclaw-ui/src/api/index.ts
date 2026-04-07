@@ -251,6 +251,14 @@ export const modelApi = {
     http.post(`/models/${providerId}/models/${encodeURIComponent(modelId)}/test`),
 }
 
+// ==================== OAuth ====================
+export const oauthApi = {
+  authorize: () => http.get('/oauth/openai/authorize'),
+  status: () => http.get('/oauth/openai/status'),
+  refresh: () => http.post('/oauth/openai/refresh'),
+  revoke: () => http.delete('/oauth/openai/revoke'),
+}
+
 // ==================== Settings ====================
 export const settingsApi = {
   get: () => http.get('/settings'),
