@@ -446,3 +446,27 @@ ALTER TABLE mate_model_provider ADD COLUMN IF NOT EXISTS oauth_account_id VARCHA
 
 -- 清理 Codex 不支持的 ChatGPT OAuth 模型（gpt-4o, o3, o4-mini 在 Codex 模式下不可用）
 DELETE FROM mate_model_config WHERE provider = 'openai-chatgpt' AND model_name IN ('gpt-4o', 'o3', 'o4-mini');
+
+-- ==================== 异步任务（视频/图片生成等长耗时操作） ====================
+
+CREATE TABLE IF NOT EXISTS mate_async_task (
+    id               BIGINT        NOT NULL PRIMARY KEY,
+    task_id          VARCHAR(64)   NOT NULL UNIQUE,
+    task_type        VARCHAR(32)   NOT NULL,
+    status           VARCHAR(16)   NOT NULL DEFAULT 'pending',
+    conversation_id  VARCHAR(128),
+    message_id       BIGINT,
+    provider_name    VARCHAR(64),
+    provider_task_id VARCHAR(128),
+    request_json     TEXT,
+    result_json      TEXT,
+    error_message    VARCHAR(512),
+    progress         INT           DEFAULT 0,
+    created_by       VARCHAR(64),
+    create_time      DATETIME      NOT NULL,
+    update_time      DATETIME      NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_async_task_taskid ON mate_async_task(task_id);
+CREATE INDEX IF NOT EXISTS idx_async_task_conv ON mate_async_task(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_async_task_status ON mate_async_task(status);

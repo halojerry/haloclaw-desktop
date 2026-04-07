@@ -502,6 +502,19 @@ export interface SystemSettings {
   // Keyless 搜索 provider
   duckduckgoEnabled: boolean
   searxngBaseUrl: string
+  // 视频生成配置
+  videoEnabled?: boolean
+  videoProvider?: string
+  videoFallbackEnabled?: boolean
+  zhipuApiKey?: string
+  zhipuBaseUrl?: string
+  zhipuApiKeyMasked?: string
+  falApiKey?: string
+  falApiKeyMasked?: string
+  klingAccessKey?: string
+  klingSecretKey?: string
+  klingAccessKeyMasked?: string
+  klingSecretKeyMasked?: string
 }
 
 export interface ProviderModelInfo {

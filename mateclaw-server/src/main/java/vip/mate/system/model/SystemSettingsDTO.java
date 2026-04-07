@@ -33,4 +33,31 @@ public class SystemSettingsDTO {
     // 用于前端回显脱敏后的 API Key
     private String serperApiKeyMasked;
     private String tavilyApiKeyMasked;
+
+    // ===== 视频生成配置 =====
+    /** 是否启用视频生成能力 */
+    private Boolean videoEnabled;
+    /** 首选视频 provider: auto / dashscope / zhipu-cogvideo / fal / kling */
+    private String videoProvider;
+    /** 是否启用 provider 级 fallback */
+    private Boolean videoFallbackEnabled;
+
+    // --- 智谱 CogVideo ---
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
+    private String zhipuApiKey;
+    private String zhipuBaseUrl;
+    private String zhipuApiKeyMasked;
+
+    // --- fal.ai ---
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
+    private String falApiKey;
+    private String falApiKeyMasked;
+
+    // --- 快手可灵 Kling ---
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
+    private String klingAccessKey;
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
+    private String klingSecretKey;
+    private String klingAccessKeyMasked;
+    private String klingSecretKeyMasked;
 }

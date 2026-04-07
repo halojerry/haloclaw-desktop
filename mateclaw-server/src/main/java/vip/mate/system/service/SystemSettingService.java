@@ -27,6 +27,16 @@ public class SystemSettingService {
     private static final String DUCKDUCKGO_ENABLED_KEY = "duckduckgoEnabled";
     private static final String SEARXNG_BASE_URL_KEY = "searxngBaseUrl";
 
+    // 视频生成配置 keys
+    private static final String VIDEO_ENABLED_KEY = "videoEnabled";
+    private static final String VIDEO_PROVIDER_KEY = "videoProvider";
+    private static final String VIDEO_FALLBACK_ENABLED_KEY = "videoFallbackEnabled";
+    private static final String ZHIPU_API_KEY_KEY = "zhipuApiKey";
+    private static final String ZHIPU_BASE_URL_KEY = "zhipuBaseUrl";
+    private static final String FAL_API_KEY_KEY = "falApiKey";
+    private static final String KLING_ACCESS_KEY_KEY = "klingAccessKey";
+    private static final String KLING_SECRET_KEY_KEY = "klingSecretKey";
+
     private final SystemSettingMapper systemSettingMapper;
 
     public SystemSettingsDTO getSettings() {
@@ -48,6 +58,32 @@ public class SystemSettingService {
         // API Key 脱敏回显
         dto.setSerperApiKeyMasked(maskApiKey(getValue(SERPER_API_KEY_KEY, "")));
         dto.setTavilyApiKeyMasked(maskApiKey(getValue(TAVILY_API_KEY_KEY, "")));
+
+        // 视频生成配置
+        dto.setVideoEnabled(Boolean.parseBoolean(getValue(VIDEO_ENABLED_KEY, "false")));
+        dto.setVideoProvider(getValue(VIDEO_PROVIDER_KEY, "auto"));
+        dto.setVideoFallbackEnabled(Boolean.parseBoolean(getValue(VIDEO_FALLBACK_ENABLED_KEY, "true")));
+        dto.setZhipuBaseUrl(getValue(ZHIPU_BASE_URL_KEY, ""));
+        dto.setZhipuApiKeyMasked(maskApiKey(getValue(ZHIPU_API_KEY_KEY, "")));
+        dto.setFalApiKeyMasked(maskApiKey(getValue(FAL_API_KEY_KEY, "")));
+        dto.setKlingAccessKeyMasked(maskApiKey(getValue(KLING_ACCESS_KEY_KEY, "")));
+        dto.setKlingSecretKeyMasked(maskApiKey(getValue(KLING_SECRET_KEY_KEY, "")));
+        return dto;
+    }
+
+    /**
+     * 获取全部配置（内部使用，包含明文 API Key）— 供 VideoGenerationService 等后端服务使用
+     */
+    public SystemSettingsDTO getAllSettings() {
+        SystemSettingsDTO dto = getSettings();
+        // 补充搜索明文 Key
+        dto.setSerperApiKey(getValue(SERPER_API_KEY_KEY, ""));
+        dto.setTavilyApiKey(getValue(TAVILY_API_KEY_KEY, ""));
+        // 补充视频明文 Key
+        dto.setZhipuApiKey(getValue(ZHIPU_API_KEY_KEY, ""));
+        dto.setFalApiKey(getValue(FAL_API_KEY_KEY, ""));
+        dto.setKlingAccessKey(getValue(KLING_ACCESS_KEY_KEY, ""));
+        dto.setKlingSecretKey(getValue(KLING_SECRET_KEY_KEY, ""));
         return dto;
     }
 
@@ -103,6 +139,32 @@ public class SystemSettingService {
         }
         if (dto.getSearxngBaseUrl() != null) {
             saveValue(SEARXNG_BASE_URL_KEY, dto.getSearxngBaseUrl(), "SearXNG 实例地址");
+        }
+
+        // 视频生成配置
+        if (dto.getVideoEnabled() != null) {
+            saveValue(VIDEO_ENABLED_KEY, String.valueOf(dto.getVideoEnabled()), "是否启用视频生成");
+        }
+        if (dto.getVideoProvider() != null) {
+            saveValue(VIDEO_PROVIDER_KEY, dto.getVideoProvider(), "视频生成首选 Provider");
+        }
+        if (dto.getVideoFallbackEnabled() != null) {
+            saveValue(VIDEO_FALLBACK_ENABLED_KEY, String.valueOf(dto.getVideoFallbackEnabled()), "视频 Provider 级 Fallback");
+        }
+        if (dto.getZhipuApiKey() != null && !dto.getZhipuApiKey().isBlank()) {
+            saveValue(ZHIPU_API_KEY_KEY, dto.getZhipuApiKey(), "智谱 CogVideo API Key");
+        }
+        if (dto.getZhipuBaseUrl() != null) {
+            saveValue(ZHIPU_BASE_URL_KEY, dto.getZhipuBaseUrl(), "智谱 API Base URL");
+        }
+        if (dto.getFalApiKey() != null && !dto.getFalApiKey().isBlank()) {
+            saveValue(FAL_API_KEY_KEY, dto.getFalApiKey(), "fal.ai API Key");
+        }
+        if (dto.getKlingAccessKey() != null && !dto.getKlingAccessKey().isBlank()) {
+            saveValue(KLING_ACCESS_KEY_KEY, dto.getKlingAccessKey(), "快手可灵 Access Key");
+        }
+        if (dto.getKlingSecretKey() != null && !dto.getKlingSecretKey().isBlank()) {
+            saveValue(KLING_SECRET_KEY_KEY, dto.getKlingSecretKey(), "快手可灵 Secret Key");
         }
         return getSettings();
     }

@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.tool.ToolCallback;
+import vip.mate.tool.builtin.ToolExecutionContext;
 import vip.mate.agent.AgentToolSet;
 import vip.mate.agent.GraphEventPublisher;
 import vip.mate.approval.ApprovalWorkflowService;
@@ -143,9 +144,13 @@ public class ToolExecutionExecutor {
         return execute(toolCalls, conversationId, agentId, isReplay, "");
     }
 
+    /** 当前执行的 requesterId，传递给 ToolExecutionContext */
+    private volatile String currentRequesterId;
+
     public ToolExecutionResult execute(List<AssistantMessage.ToolCall> toolCalls,
                                         String conversationId, String agentId,
                                         boolean isReplay, String requesterId) {
+        this.currentRequesterId = requesterId;
         List<ToolResponseMessage.ToolResponse> allResponses = new ArrayList<>();
         List<GraphEventPublisher.GraphEvent> events = Collections.synchronizedList(new ArrayList<>());
 
@@ -386,7 +391,16 @@ public class ToolExecutionExecutor {
             log.info("[ToolExecutor] Executing tool: {} with args: {}",
                     toolName, pc.arguments != null && pc.arguments.length() > 200
                             ? pc.arguments.substring(0, 200) + "..." : pc.arguments);
-            String result = pc.callback.call(pc.arguments);
+
+            // 注入工具执行上下文（供 VideoGenerateTool 等获取 conversationId / username）
+            ToolExecutionContext.set(pc.conversationId, currentRequesterId);
+            String result;
+            try {
+                result = pc.callback.call(pc.arguments);
+            } finally {
+                ToolExecutionContext.clear();
+            }
+
             int rawLen = result != null ? result.length() : 0;
             result = truncateToolResult(result, MAX_TOOL_RESULT_CHARS);
             log.info("[ToolExecutor] Tool {} returned {} chars{}", toolName, rawLen,

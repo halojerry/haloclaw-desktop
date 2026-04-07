@@ -86,6 +86,12 @@ const router = createRouter({
               meta: { title: 'Settings - System' },
             },
             {
+              path: 'video',
+              name: 'SettingsVideo',
+              component: () => import('@/views/Settings/Video/index.vue'),
+              meta: { title: 'Settings - Video' },
+            },
+            {
               path: 'about',
               name: 'SettingsAbout',
               component: () => import('@/views/Settings/About/index.vue'),

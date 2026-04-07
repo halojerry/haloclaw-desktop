@@ -618,6 +618,26 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     phaseInfo.value = null
   })
 
+  // ===== 异步任务完成事件（视频生成等） =====
+  stream.on('async_task_completed', (data) => {
+    console.log('[useChat] Async task completed:', data)
+    if (data.success && data.videoUrl && streamConversationId) {
+      // 在消息列表中追加一条包含视频的 assistant 消息
+      addMessage({
+        role: 'assistant',
+        content: '',
+        contentParts: [{
+          type: 'video',
+          fileUrl: data.videoUrl,
+          fileName: `video_${data.taskId}.mp4`,
+          contentType: 'video/mp4',
+        }] as MessageContentPart[],
+        status: 'completed',
+        conversationId: streamConversationId,
+      })
+    }
+  })
+
   // ===== 发送消息（支持运行中继续发送） =====
 
   const sendMessage = async (content: string, options: SendMessageOptions) => {
