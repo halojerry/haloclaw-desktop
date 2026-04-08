@@ -1,0 +1,63 @@
+package vip.mate.wiki.model;
+
+import com.baomidou.mybatisplus.annotation.*;
+import lombok.Data;
+
+import java.time.LocalDateTime;
+
+/**
+ * Wiki 原始材料实体
+ *
+ * @author MateClaw Team
+ */
+@Data
+@TableName("mate_wiki_raw_material")
+public class WikiRawMaterialEntity {
+
+    @TableId(type = IdType.ASSIGN_ID)
+    private Long id;
+
+    /** 所属知识库 ID */
+    private Long kbId;
+
+    /** 材料标题 */
+    private String title;
+
+    /** 来源类型：text / pdf / docx / url / paste */
+    private String sourceType;
+
+    /** 原始文件路径（二进制文件） */
+    private String sourcePath;
+
+    /** 原始文本内容（文本类型） */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private String originalContent;
+
+    /** 提取后的文本（PDF/DOCX 等） */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private String extractedText;
+
+    /** 内容 SHA-256 哈希（用于去重和变更检测） */
+    private String contentHash;
+
+    /** 文件大小（字节） */
+    private Long fileSize;
+
+    /** 处理状态：pending / processing / completed / failed */
+    private String processingStatus;
+
+    /** 上次处理时间 */
+    private LocalDateTime lastProcessedAt;
+
+    /** 错误信息 */
+    private String errorMessage;
+
+    @TableField(fill = FieldFill.INSERT)
+    private LocalDateTime createTime;
+
+    @TableField(fill = FieldFill.INSERT_UPDATE)
+    private LocalDateTime updateTime;
+
+    @TableLogic
+    private Integer deleted;
+}

@@ -69,6 +69,7 @@ import vip.mate.tool.guard.service.ToolGuardService;
 import vip.mate.workspace.conversation.ConversationService;
 import vip.mate.approval.ApprovalWorkflowService;
 import vip.mate.channel.web.ChatStreamTracker;
+import vip.mate.wiki.service.WikiContextService;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
@@ -114,6 +115,7 @@ public class AgentGraphBuilder {
     private final WorkspaceFileService workspaceFileService;
     private final vip.mate.agent.context.ConversationWindowManager conversationWindowManager;
     private final vip.mate.llm.chatgpt.ChatGPTResponsesClient chatGPTResponsesClient;
+    private final WikiContextService wikiContextService;
 
     /**
      * 根据 AgentEntity 构建完整的 Agent 实例
@@ -611,7 +613,10 @@ public class AgentGraphBuilder {
                 """;
         }
 
-        return basePrompt + skillEnhancement + toolGuidance + searchGuidance;
+        // Wiki 知识库上下文注入
+        String wikiContext = wikiContextService.buildWikiContext(entity.getId());
+
+        return basePrompt + skillEnhancement + toolGuidance + searchGuidance + wikiContext;
     }
 
     // ==================== 模型选项构建 ====================

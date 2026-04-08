@@ -45,6 +45,12 @@ const router = createRouter({
           meta: { title: 'Skills' },
         },
         {
+          path: 'wiki',
+          name: 'Wiki',
+          component: () => import('@/views/Wiki/index.vue'),
+          meta: { title: 'Wiki' },
+        },
+        {
           path: 'tools',
           name: 'Tools',
           component: () => import('@/views/Tools.vue'),

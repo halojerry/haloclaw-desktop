@@ -1,0 +1,233 @@
+package vip.mate.wiki.service;
+
+import cn.hutool.json.JSONObject;
+import cn.hutool.json.JSONUtil;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import vip.mate.tool.builtin.DocumentExtractTool;
+import vip.mate.wiki.WikiProperties;
+import vip.mate.wiki.event.WikiProcessingEvent;
+import vip.mate.wiki.model.WikiRawMaterialEntity;
+import vip.mate.wiki.repository.WikiRawMaterialMapper;
+
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.HexFormat;
+import java.util.List;
+
+/**
+ * Wiki 原始材料服务
+ *
+ * @author MateClaw Team
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class WikiRawMaterialService {
+
+    private final WikiRawMaterialMapper rawMapper;
+    private final WikiKnowledgeBaseService kbService;
+    private final WikiProperties properties;
+    private final ApplicationEventPublisher eventPublisher;
+    private final DocumentExtractTool documentExtractTool;
+
+    public List<WikiRawMaterialEntity> listByKbId(Long kbId) {
+        List<WikiRawMaterialEntity> list = rawMapper.selectList(
+                new LambdaQueryWrapper<WikiRawMaterialEntity>()
+                        .eq(WikiRawMaterialEntity::getKbId, kbId)
+                        .orderByDesc(WikiRawMaterialEntity::getCreateTime));
+        // 不返回大文本字段
+        list.forEach(r -> {
+            r.setOriginalContent(null);
+            r.setExtractedText(null);
+        });
+        return list;
+    }
+
+    public WikiRawMaterialEntity getById(Long id) {
+        return rawMapper.selectById(id);
+    }
+
+    public WikiRawMaterialEntity findBySourcePath(Long kbId, String sourcePath) {
+        return rawMapper.selectOne(
+                new LambdaQueryWrapper<WikiRawMaterialEntity>()
+                        .eq(WikiRawMaterialEntity::getKbId, kbId)
+                        .eq(WikiRawMaterialEntity::getSourcePath, sourcePath));
+    }
+
+    public List<WikiRawMaterialEntity> listPending(Long kbId) {
+        return rawMapper.selectList(
+                new LambdaQueryWrapper<WikiRawMaterialEntity>()
+                        .eq(WikiRawMaterialEntity::getKbId, kbId)
+                        .eq(WikiRawMaterialEntity::getProcessingStatus, "pending"));
+    }
+
+    /**
+     * 添加文本类型的原始材料
+     */
+    @Transactional
+    public WikiRawMaterialEntity addText(Long kbId, String title, String content) {
+        WikiRawMaterialEntity entity = new WikiRawMaterialEntity();
+        entity.setKbId(kbId);
+        entity.setTitle(title);
+        entity.setSourceType("text");
+        entity.setOriginalContent(content);
+        entity.setFileSize((long) content.getBytes(StandardCharsets.UTF_8).length);
+        entity.setContentHash(computeHash(content));
+        entity.setProcessingStatus("pending");
+        rawMapper.insert(entity);
+
+        kbService.incrementRawCount(kbId);
+
+        if (properties.isAutoProcessOnUpload()) {
+            eventPublisher.publishEvent(new WikiProcessingEvent(this, entity.getId(), kbId));
+        }
+
+        log.info("[Wiki] Raw material added: id={}, kbId={}, title={}", entity.getId(), kbId, title);
+        return entity;
+    }
+
+    /**
+     * 添加文件类型的原始材料（PDF/DOCX 等）
+     */
+    @Transactional
+    public WikiRawMaterialEntity addFile(Long kbId, String title, String sourceType,
+                                          String sourcePath, long fileSize) {
+        WikiRawMaterialEntity entity = new WikiRawMaterialEntity();
+        entity.setKbId(kbId);
+        entity.setTitle(title);
+        entity.setSourceType(sourceType);
+        entity.setSourcePath(sourcePath);
+        entity.setFileSize(fileSize);
+        entity.setProcessingStatus("pending");
+        rawMapper.insert(entity);
+
+        kbService.incrementRawCount(kbId);
+
+        if (properties.isAutoProcessOnUpload()) {
+            eventPublisher.publishEvent(new WikiProcessingEvent(this, entity.getId(), kbId));
+        }
+
+        log.info("[Wiki] Raw file added: id={}, kbId={}, type={}", entity.getId(), kbId, sourceType);
+        return entity;
+    }
+
+    /**
+     * CAS 式抢占：仅当当前状态为 pending 时才更新为 processing。
+     *
+     * @return true 表示抢占成功，false 表示已被其他线程处理
+     */
+    @Transactional
+    public boolean claimForProcessing(Long id) {
+        WikiRawMaterialEntity entity = rawMapper.selectById(id);
+        if (entity == null || !"pending".equals(entity.getProcessingStatus())) {
+            return false;
+        }
+        entity.setProcessingStatus("processing");
+        entity.setErrorMessage(null);
+        rawMapper.updateById(entity);
+        return true;
+    }
+
+    @Transactional
+    public void updateProcessingStatus(Long id, String status, String errorMessage) {
+        WikiRawMaterialEntity entity = rawMapper.selectById(id);
+        if (entity == null) return;
+        entity.setProcessingStatus(status);
+        entity.setErrorMessage(errorMessage);
+        if ("completed".equals(status)) {
+            entity.setLastProcessedAt(java.time.LocalDateTime.now());
+        }
+        rawMapper.updateById(entity);
+    }
+
+    @Transactional
+    public void updateExtractedText(Long id, String extractedText, String contentHash) {
+        WikiRawMaterialEntity entity = rawMapper.selectById(id);
+        if (entity == null) return;
+        entity.setExtractedText(extractedText);
+        entity.setContentHash(contentHash);
+        rawMapper.updateById(entity);
+    }
+
+    /**
+     * 重新处理：重置状态为 pending 并发布事件
+     */
+    @Transactional
+    public void reprocess(Long id) {
+        WikiRawMaterialEntity entity = rawMapper.selectById(id);
+        if (entity == null) {
+            throw new IllegalArgumentException("Raw material not found: " + id);
+        }
+        entity.setProcessingStatus("pending");
+        entity.setErrorMessage(null);
+        rawMapper.updateById(entity);
+
+        eventPublisher.publishEvent(new WikiProcessingEvent(this, entity.getId(), entity.getKbId()));
+        log.info("[Wiki] Raw material queued for reprocessing: id={}", id);
+    }
+
+    @Transactional
+    public void delete(Long id) {
+        rawMapper.deleteById(id);
+    }
+
+    /**
+     * 获取可用文本内容
+     * <p>
+     * 优先级：已缓存的 extractedText → 原始文本 → 调用 DocumentExtractTool 提取二进制文件
+     */
+    public String getTextContent(WikiRawMaterialEntity entity) {
+        // 已有缓存的提取文本
+        if (entity.getExtractedText() != null && !entity.getExtractedText().isBlank()) {
+            return entity.getExtractedText();
+        }
+        // 文本类型直接返回原始内容
+        if ("text".equals(entity.getSourceType())) {
+            return entity.getOriginalContent();
+        }
+        // 二进制文件：调用 DocumentExtractTool 提取
+        if (entity.getSourcePath() != null && !entity.getSourcePath().isBlank()) {
+            try {
+                String result = documentExtractTool.extract_document_text(entity.getSourcePath(), null);
+                JSONObject json = JSONUtil.parseObj(result);
+                if (json.getBool("success", false)) {
+                    String text = json.getStr("text");
+                    if (text != null && !text.isBlank()) {
+                        boolean truncated = json.getBool("truncated", false);
+                        if (truncated) {
+                            // 截断的结果不缓存，避免永久丢失后半内容。返回文本供分块处理使用。
+                            log.warn("[Wiki] Extracted text truncated at {} chars for: {} (full document may be larger)",
+                                    text.length(), entity.getSourcePath());
+                        } else {
+                            // 完整提取结果：缓存以避免重复提取
+                            updateExtractedText(entity.getId(), text, computeHash(text));
+                        }
+                        log.info("[Wiki] Extracted text from {}: {} chars, method={}, truncated={}",
+                                entity.getSourcePath(), text.length(), json.getStr("method"), truncated);
+                        return text;
+                    }
+                }
+                log.warn("[Wiki] Document extraction returned no text for: {}", entity.getSourcePath());
+            } catch (Exception e) {
+                log.error("[Wiki] Document extraction failed for {}: {}", entity.getSourcePath(), e.getMessage());
+            }
+        }
+        return entity.getOriginalContent();
+    }
+
+    private String computeHash(String content) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(content.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(hash);
+        } catch (Exception e) {
+            log.warn("[Wiki] Failed to compute content hash: {}", e.getMessage());
+            return null;
+        }
+    }
+}

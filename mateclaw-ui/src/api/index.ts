@@ -321,3 +321,52 @@ export const cronJobApi = {
     http.put(`/cron-jobs/${id}/toggle`, null, { params: { enabled } }),
   runNow: (id: string | number) => http.post(`/cron-jobs/${id}/run`),
 }
+
+// ==================== Wiki Knowledge Base ====================
+export const wikiApi = {
+  // Knowledge Base
+  listKBs: () => http.get('/wiki/knowledge-bases'),
+  getKB: (id: number) => http.get(`/wiki/knowledge-bases/${id}`),
+  listKBsByAgent: (agentId: number) => http.get(`/wiki/knowledge-bases/agent/${agentId}`),
+  createKB: (data: { name: string; description?: string; agentId?: number }) =>
+    http.post('/wiki/knowledge-bases', data),
+  updateKB: (id: number, data: { name?: string; description?: string; agentId?: number }) =>
+    http.put(`/wiki/knowledge-bases/${id}`, data),
+  deleteKB: (id: number) => http.delete(`/wiki/knowledge-bases/${id}`),
+  getConfig: (id: number) => http.get(`/wiki/knowledge-bases/${id}/config`),
+  updateConfig: (id: number, content: string) =>
+    http.put(`/wiki/knowledge-bases/${id}/config`, { content }),
+
+  // Directory Scan
+  setSourceDirectory: (id: number, path: string) =>
+    http.put(`/wiki/knowledge-bases/${id}/source-directory`, { path }),
+  scanDirectory: (id: number) => http.post(`/wiki/knowledge-bases/${id}/scan`),
+
+  // Raw Materials
+  listRaw: (kbId: number) => http.get(`/wiki/knowledge-bases/${kbId}/raw`),
+  addRawText: (kbId: number, data: { title: string; content: string }) =>
+    http.post(`/wiki/knowledge-bases/${kbId}/raw/text`, data),
+  uploadRaw: (kbId: number, formData: FormData) =>
+    http.post(`/wiki/knowledge-bases/${kbId}/raw/upload`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
+  deleteRaw: (kbId: number, rawId: number) =>
+    http.delete(`/wiki/knowledge-bases/${kbId}/raw/${rawId}`),
+  reprocessRaw: (kbId: number, rawId: number) =>
+    http.post(`/wiki/knowledge-bases/${kbId}/raw/${rawId}/reprocess`),
+
+  // Wiki Pages
+  listPages: (kbId: number) => http.get(`/wiki/knowledge-bases/${kbId}/pages`),
+  getPage: (kbId: number, slug: string) =>
+    http.get(`/wiki/knowledge-bases/${kbId}/pages/${encodeURIComponent(slug)}`),
+  updatePage: (kbId: number, slug: string, content: string) =>
+    http.put(`/wiki/knowledge-bases/${kbId}/pages/${encodeURIComponent(slug)}`, { content }),
+  deletePage: (kbId: number, slug: string) =>
+    http.delete(`/wiki/knowledge-bases/${kbId}/pages/${encodeURIComponent(slug)}`),
+  getBacklinks: (kbId: number, slug: string) =>
+    http.get(`/wiki/knowledge-bases/${kbId}/pages/${encodeURIComponent(slug)}/backlinks`),
+
+  // Processing
+  processKB: (kbId: number) => http.post(`/wiki/knowledge-bases/${kbId}/process`),
+  getProcessingStatus: (kbId: number) => http.get(`/wiki/knowledge-bases/${kbId}/processing-status`),
+}
