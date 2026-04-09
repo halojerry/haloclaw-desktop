@@ -66,36 +66,36 @@
             <span class="health-label">{{ t('doctor.title') }}</span>
           </button>
 
-          <div class="sidebar-utility-section">
-            <div class="utility-label">{{ t('nav.themeLabel') }}</div>
-            <div class="theme-toggle-row">
-              <button
-                v-for="opt in themeOptions"
-                :key="opt.value"
-                class="theme-btn"
-                :class="{ active: themeStore.mode === opt.value }"
-                :title="opt.label"
-                @click="themeStore.setMode(opt.value)"
-              >
-                <span v-html="opt.icon"></span>
-                <span class="theme-btn-label">{{ opt.label }}</span>
-              </button>
+          <div class="sidebar-utility-card">
+            <div class="compact-utility-row">
+              <span class="compact-utility-title">{{ t('nav.themeLabel') }}</span>
+              <div class="theme-toggle-row theme-toggle-row--compact">
+                <button
+                  v-for="opt in themeOptions"
+                  :key="opt.value"
+                  class="theme-btn theme-btn--compact"
+                  :class="{ active: themeStore.mode === opt.value }"
+                  :title="opt.label"
+                  @click="themeStore.setMode(opt.value)"
+                >
+                  <span v-html="opt.icon"></span>
+                </button>
+              </div>
             </div>
-          </div>
 
-          <div class="sidebar-utility-section">
-            <div class="utility-label">{{ t('nav.languageLabel') }}</div>
-            <div class="language-toggle-row">
-              <button
-                v-for="opt in localeOptions"
-                :key="opt.value"
-                class="language-btn"
-                :class="{ active: currentLocaleValue === opt.value }"
-                @click="changeLocale(opt.value)"
-              >
-                <span class="language-abbr">{{ opt.short }}</span>
-                <span class="language-label">{{ opt.label }}</span>
-              </button>
+            <div class="compact-utility-row">
+              <span class="compact-utility-title">{{ t('nav.languageLabel') }}</span>
+              <div class="language-toggle-row language-toggle-row--compact">
+                <button
+                  v-for="opt in localeOptions"
+                  :key="opt.value"
+                  class="language-btn language-btn--compact"
+                  :class="{ active: currentLocaleValue === opt.value }"
+                  @click="changeLocale(opt.value)"
+                >
+                  <span class="language-abbr">{{ opt.short }}</span>
+                </button>
+              </div>
             </div>
           </div>
 
@@ -486,24 +486,24 @@ watch(() => workspaceStore.currentWorkspaceId, () => {
 .sidebar-logo {
   display: flex;
   align-items: center;
-  padding: 18px 16px 14px;
+  padding: 14px 14px 12px;
   border-bottom: 1px solid var(--mc-border-light);
   gap: 12px;
-  min-height: 72px;
+  min-height: 64px;
 }
 
 .sidebar.collapsed .sidebar-logo {
   flex-direction: column;
   justify-content: center;
-  padding: 14px 10px;
-  gap: 8px;
-  min-height: 110px;
+  padding: 12px 10px;
+  gap: 6px;
+  min-height: 92px;
 }
 
 .logo-icon {
-  width: 42px;
-  height: 42px;
-  border-radius: 14px;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -514,8 +514,8 @@ watch(() => workspaceStore.currentWorkspaceId, () => {
 }
 
 .logo-img {
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 34px;
   object-fit: contain;
   filter: drop-shadow(0 8px 18px rgba(217, 109, 70, 0.22));
 }
@@ -526,7 +526,7 @@ watch(() => workspaceStore.currentWorkspaceId, () => {
 
 .logo-name {
   display: block;
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 800;
   color: var(--mc-sidebar-logo-name);
   white-space: nowrap;
@@ -539,15 +539,15 @@ watch(() => workspaceStore.currentWorkspaceId, () => {
 
 .logo-version {
   display: block;
-  font-size: 11px;
+  font-size: 10px;
   color: var(--mc-text-tertiary);
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
 .collapse-btn {
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   border: 1px solid var(--mc-border-light);
   background: var(--mc-bg-muted);
   cursor: pointer;
@@ -584,17 +584,19 @@ watch(() => workspaceStore.currentWorkspaceId, () => {
 .sidebar-nav {
   flex: 1;
   overflow-y: auto;
-  padding: 12px 0 8px;
+  padding: 8px 0 4px;
+  scrollbar-width: none;
 }
 
 .sidebar-nav::-webkit-scrollbar { width: 4px; }
 .sidebar-nav::-webkit-scrollbar-thumb { background: var(--mc-border); border-radius: 2px; }
+.sidebar-nav::-webkit-scrollbar { display: none; }
 
 .nav-group { margin-bottom: 2px; }
 
 .nav-group-title {
-  padding: 10px 18px 6px;
-  font-size: 11px;
+  padding: 8px 18px 4px;
+  font-size: 10px;
   font-weight: 600;
   color: var(--mc-sidebar-group-title);
   text-transform: uppercase;
@@ -606,11 +608,11 @@ watch(() => workspaceStore.currentWorkspaceId, () => {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 11px 12px;
+  padding: 10px 12px;
   color: var(--mc-sidebar-text);
   text-decoration: none;
-  font-size: 14px;
-  border-radius: 14px;
+  font-size: 13px;
+  border-radius: 13px;
   margin: 2px 10px;
   transition: all 0.15s ease;
   white-space: nowrap;
@@ -647,19 +649,46 @@ watch(() => workspaceStore.currentWorkspaceId, () => {
 /* 底部 */
 .sidebar-footer {
   border-top: 1px solid var(--mc-border-light);
-  padding: 14px 14px 16px;
+  padding: 10px 12px 12px;
   background: var(--mc-sidebar-footer-bg);
   backdrop-filter: blur(14px);
   position: relative;
 }
-.health-indicator { display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 12px; border: 1px solid var(--mc-border-light); background: var(--mc-bg-muted); border-radius: 14px; cursor: pointer; color: var(--mc-text-secondary); font-size: 12px; margin-bottom: 10px; }
+.health-indicator { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px; border: 1px solid var(--mc-border-light); background: var(--mc-bg-muted); border-radius: 12px; cursor: pointer; color: var(--mc-text-secondary); font-size: 12px; margin-bottom: 8px; }
 .health-indicator:hover { background: var(--mc-bg-sunken); }
 .health-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .health-indicator.healthy .health-dot { background: var(--mc-success); }
 .health-indicator.warning .health-dot { background: var(--mc-primary); }
 .health-indicator.error .health-dot { background: var(--mc-danger); }
 .health-indicator.unknown .health-dot { background: var(--mc-text-tertiary); }
-.sidebar-utility-section { margin-bottom: 12px; }
+
+.sidebar-utility-card {
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border-radius: 16px;
+  border: 1px solid var(--mc-border-light);
+  background: color-mix(in srgb, var(--mc-sidebar-footer-bg) 74%, transparent);
+}
+
+.compact-utility-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.compact-utility-row + .compact-utility-row {
+  margin-top: 6px;
+}
+
+.compact-utility-title {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--mc-text-secondary);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
 .utility-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; color: var(--mc-text-tertiary); margin: 0 0 8px; padding-left: 2px; }
 
 /* 主题切换 */
@@ -673,9 +702,21 @@ watch(() => workspaceStore.currentWorkspaceId, () => {
   border: 1px solid var(--mc-border-light);
 }
 
+.theme-toggle-row--compact {
+  margin-bottom: 0;
+  padding: 2px;
+  gap: 3px;
+  border-radius: 999px;
+}
+
 .language-toggle-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.language-toggle-row--compact {
+  display: flex;
   gap: 6px;
 }
 
@@ -694,6 +735,14 @@ watch(() => workspaceStore.currentWorkspaceId, () => {
   font-size: 11px;
   transition: all 0.15s ease;
   white-space: nowrap;
+}
+
+.theme-btn--compact {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 999px;
+  flex: 0 0 auto;
 }
 
 .theme-btn:hover {
@@ -759,19 +808,33 @@ watch(() => workspaceStore.currentWorkspaceId, () => {
   white-space: nowrap;
 }
 
+.language-btn--compact {
+  width: 34px;
+  min-width: 34px;
+  justify-content: center;
+  padding: 4px 0;
+  border-radius: 999px;
+}
+
+.language-btn--compact .language-abbr {
+  width: 20px;
+  height: 20px;
+  font-size: 10px;
+}
+
 .user-info {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 10px;
-  border-radius: 16px;
+  padding: 8px 9px;
+  border-radius: 14px;
   background: var(--mc-bg-muted);
   border: 1px solid var(--mc-border-light);
 }
 
 .user-avatar {
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   background: linear-gradient(135deg, var(--mc-primary), var(--mc-accent));
   border-radius: 12px;
   display: flex;
@@ -786,7 +849,7 @@ watch(() => workspaceStore.currentWorkspaceId, () => {
 .user-detail { flex: 1; overflow: hidden; }
 
 .user-name {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--mc-text-primary);
   white-space: nowrap;
@@ -794,11 +857,11 @@ watch(() => workspaceStore.currentWorkspaceId, () => {
   text-overflow: ellipsis;
 }
 
-.user-role { font-size: 11px; color: var(--mc-text-tertiary); }
+.user-role { font-size: 10px; color: var(--mc-text-tertiary); }
 
 .logout-btn {
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border: none;
   background: none;
   cursor: pointer;
@@ -1039,6 +1102,27 @@ watch(() => workspaceStore.currentWorkspaceId, () => {
 
   .sidebar-utility-panel {
     display: none;
+  }
+
+  .sidebar-utility-card {
+    padding: 10px;
+  }
+
+  .compact-utility-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .theme-toggle-row--compact,
+  .language-toggle-row--compact {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .theme-btn--compact,
+  .language-btn--compact {
+    flex: 1;
+    width: auto;
   }
 
   .sidebar-footer {

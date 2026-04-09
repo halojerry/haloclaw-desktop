@@ -62,7 +62,7 @@
         </div>
         <div class="raw-item-meta">
           <span class="status-badge" :class="raw.processingStatus">
-            {{ raw.processingStatus }}
+            {{ t(`wiki.status.${raw.processingStatus}`) }}
           </span>
           <span v-if="raw.errorMessage" class="error-hint" :title="raw.errorMessage">
             {{ raw.errorMessage }}
@@ -203,28 +203,34 @@ async function handleScanDir() {
 </script>
 
 <style scoped>
+.raw-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
 /* Buttons */
-.btn-primary { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; background: var(--mc-primary); color: white; border: none; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; }
+.btn-primary { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; background: var(--mc-primary); color: white; border: none; border-radius: 10px; font-size: 14px; font-weight: 500; cursor: pointer; }
 .btn-primary:hover { background: var(--mc-primary-hover); }
 .btn-primary:disabled { background: var(--mc-border); cursor: not-allowed; }
-.btn-secondary { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; background: var(--mc-bg-elevated); color: var(--mc-text-primary); border: 1px solid var(--mc-border); border-radius: 8px; font-size: 14px; cursor: pointer; white-space: nowrap; }
+.btn-secondary { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; background: var(--mc-bg-elevated); color: var(--mc-text-primary); border: 1px solid var(--mc-border); border-radius: 10px; font-size: 14px; cursor: pointer; white-space: nowrap; }
 .btn-secondary:hover { background: var(--mc-bg-sunken); }
 
 /* Directory scan */
-.dir-scan-row { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
-.dir-input-wrap { flex: 1; display: flex; align-items: center; gap: 8px; padding: 6px 12px; border: 1px solid var(--mc-border); border-radius: 8px; background: var(--mc-bg-elevated); color: var(--mc-text-tertiary); }
+.dir-scan-row { display: flex; gap: 10px; align-items: center; }
+.dir-input-wrap { flex: 1; display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid var(--mc-border); border-radius: 12px; background: var(--mc-bg-elevated); color: var(--mc-text-tertiary); }
 .dir-input-wrap:focus-within { border-color: var(--mc-primary); box-shadow: 0 0 0 2px rgba(217,119,87,0.1); }
 .dir-input { flex: 1; border: none; background: transparent; font-size: 13px; color: var(--mc-text-primary); outline: none; }
 .dir-input::placeholder { color: var(--mc-text-tertiary); }
-.scan-result { font-size: 12px; color: var(--mc-text-secondary); margin-bottom: 12px; padding: 6px 10px; background: rgba(90,138,90,0.1); border-radius: 6px; }
+.scan-result { font-size: 12px; color: var(--mc-text-secondary); padding: 8px 10px; background: rgba(90,138,90,0.1); border-radius: 10px; }
 
 /* Upload row: zone + add text side by side */
-.upload-row { display: flex; gap: 12px; align-items: stretch; margin-bottom: 20px; }
+.upload-row { display: flex; gap: 12px; align-items: stretch; }
 .upload-zone {
   flex: 1;
   border: 1px dashed var(--mc-border);
-  border-radius: 12px;
-  padding: 20px 24px;
+  border-radius: 16px;
+  padding: 18px 20px;
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s;
   display: flex;
@@ -240,12 +246,12 @@ async function handleScanDir() {
 .add-text-btn { flex-shrink: 0; }
 
 /* Raw list */
-.raw-list { display: flex; flex-direction: column; gap: 8px; }
+.raw-list { display: flex; flex-direction: column; gap: 8px; padding-top: 4px; }
 .raw-list-title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--mc-text-tertiary); margin-bottom: 4px; }
 .empty-hint { text-align: center; padding: 24px 0; font-size: 14px; color: var(--mc-text-tertiary); }
 
-.raw-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; background: var(--mc-bg-elevated); border: 1px solid var(--mc-border-light); border-radius: 10px; font-size: 13px; transition: border-color 0.15s; }
-.raw-item:hover { border-color: var(--mc-border); }
+.raw-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; background: linear-gradient(180deg, var(--mc-bg-elevated), var(--mc-bg-muted)); border: 1px solid var(--mc-border-light); border-radius: 14px; font-size: 13px; transition: border-color 0.15s, transform 0.15s; }
+.raw-item:hover { border-color: var(--mc-border); transform: translateY(-1px); }
 
 .raw-item-info { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
 .raw-item-title { font-weight: 500; color: var(--mc-text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -255,7 +261,7 @@ async function handleScanDir() {
 .error-hint { font-size: 11px; color: var(--mc-danger); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Icon button */
-.btn-icon { width: 28px; height: 28px; border: 1px solid var(--mc-border-light); background: var(--mc-bg-elevated); cursor: pointer; border-radius: 6px; color: var(--mc-text-secondary); transition: all 0.15s; display: flex; align-items: center; justify-content: center; }
+.btn-icon { width: 30px; height: 30px; border: 1px solid var(--mc-border-light); background: var(--mc-bg-elevated); cursor: pointer; border-radius: 8px; color: var(--mc-text-secondary); transition: all 0.15s; display: flex; align-items: center; justify-content: center; }
 .btn-icon:hover { background: var(--mc-bg-sunken); color: var(--mc-primary); border-color: var(--mc-border); }
 .btn-icon-danger:hover { background: var(--mc-danger-bg); color: var(--mc-danger); border-color: var(--mc-danger); }
 
@@ -282,4 +288,29 @@ async function handleScanDir() {
 .form-input:focus { border-color: var(--mc-primary); box-shadow: 0 0 0 2px rgba(217,119,87,0.1); }
 
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+
+@media (max-width: 768px) {
+  .upload-row,
+  .dir-scan-row {
+    flex-direction: column;
+  }
+
+  .add-text-btn,
+  .dir-scan-row > .btn-secondary,
+  .process-btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .raw-item {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .raw-item-meta,
+  .raw-item-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
 </style>

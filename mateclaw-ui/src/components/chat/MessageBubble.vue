@@ -22,18 +22,12 @@
         <div v-if="showThinkingPanel" class="thinking-section">
           <button class="thinking-toggle" type="button" @click="toggleThinking">
             <span class="thinking-toggle__indicator" :class="{ active: isGenerating && !hasContent }">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M9 18h6"/>
-                <path d="M10 22h4"/>
-                <path d="M12 2a7 7 0 0 0-4 12.75c.63.44 1 1.16 1 1.93V17h6v-.32c0-.77.37-1.49 1-1.93A7 7 0 0 0 12 2z"/>
-              </svg>
+              <el-icon><Opportunity /></el-icon>
             </span>
             <span class="thinking-toggle__label">{{ $t('chat.thinking') }}</span>
             <span class="thinking-toggle__duration" v-if="thinkingDuration">{{ thinkingDuration }}</span>
             <span class="thinking-toggle__arrow" :class="{ expanded: localThinkingExpanded }">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="6 9 12 15 18 9"/>
-              </svg>
+              <el-icon><ArrowDown /></el-icon>
             </span>
           </button>
 
@@ -51,16 +45,12 @@
         <div v-if="showExecutionPanel" class="execution-section">
           <button class="execution-toggle" type="button" @click="executionExpanded = !executionExpanded">
             <span class="execution-toggle__indicator" :class="{ active: isGenerating }">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
-              </svg>
+              <el-icon><Tools /></el-icon>
             </span>
             <span class="execution-toggle__label">{{ executionPhaseLabel }}</span>
             <span class="execution-toggle__count" v-if="toolCallsMeta.length">{{ toolCallsMeta.length }} calls</span>
             <span class="execution-toggle__arrow" :class="{ expanded: executionExpanded }">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="6 9 12 15 18 9"/>
-              </svg>
+              <el-icon><ArrowDown /></el-icon>
             </span>
           </button>
 
@@ -92,18 +82,10 @@
                   :class="{ 'tool-call--running': tc.status === 'running', 'tool-call--awaiting': tc.status === 'awaiting_approval', 'tool-call--error': tc.status === 'completed' && tc.success === false }"
                 >
                   <span class="tool-call__status">
-                    <svg v-if="tc.status === 'running'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin">
-                      <path d="M21 12a9 9 0 11-6.219-8.56"/>
-                    </svg>
-                    <svg v-else-if="tc.status === 'awaiting_approval'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2">
-                      <rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>
-                    </svg>
-                    <svg v-else-if="tc.success !== false" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2">
-                      <polyline points="20 6 9 17 4 12"/>
-                    </svg>
-                    <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2">
-                      <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-                    </svg>
+                    <el-icon v-if="tc.status === 'running'" class="spin"><Loading /></el-icon>
+                    <el-icon v-else-if="tc.status === 'awaiting_approval'" style="color: #f59e0b;"><WarningFilled /></el-icon>
+                    <el-icon v-else-if="tc.success !== false" style="color: #10b981;"><Select /></el-icon>
+                    <el-icon v-else style="color: #ef4444;"><CloseBold /></el-icon>
                   </span>
                   <span class="tool-call__name">{{ tc.name }}</span>
                   <span class="tool-call__args" v-if="tc.arguments">{{ truncateArgs(tc.arguments) }}</span>
@@ -123,9 +105,7 @@
         <!-- 工具审批面板 -->
         <div v-if="pendingApproval" class="approval-section" :class="approvalSeverityClass">
           <div class="approval-header">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-            </svg>
+            <el-icon><WarningFilled /></el-icon>
             <span class="approval-title">{{ $t('chat.approvalRequired') || 'Approval Required' }}</span>
             <span v-if="pendingApproval.maxSeverity" class="approval-severity-badge" :class="'severity-' + pendingApproval.maxSeverity?.toLowerCase()">
               {{ pendingApproval.maxSeverity }}
@@ -149,9 +129,7 @@
             </div>
           </div>
           <div v-if="pendingApproval.status === 'pending_approval'" class="approval-waiting">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="approval-waiting__spin">
-              <path d="M21 12a9 9 0 11-6.219-8.56"/>
-            </svg>
+            <el-icon class="approval-waiting__spin"><Loading /></el-icon>
             <span>{{ $t('chat.approvalWaiting') }}</span>
           </div>
           <div v-else-if="pendingApproval.status === 'approved'" class="approval-resolved approval-resolved--approved">
@@ -179,20 +157,14 @@
 
         <!-- 停止指示器 -->
         <div v-if="status === 'stopped' || status === 'interrupted'" class="stopped-indicator">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="3" y="3" width="18" height="18" rx="2"/>
-          </svg>
+          <el-icon><CloseBold /></el-icon>
           <span>{{ status === 'interrupted' ? ($t('chat.interrupted') || '已中断') : $t('chat.stopped') }}</span>
         </div>
 
         <!-- 错误卡片 -->
         <div v-if="status === 'failed'" class="error-card">
           <div class="error-card__header">
-            <svg class="error-card__icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-              <line x1="12" y1="9" x2="12" y2="13"/>
-              <line x1="12" y1="17" x2="12.01" y2="17"/>
-            </svg>
+            <el-icon class="error-card__icon"><WarningFilled /></el-icon>
             <span class="error-card__title">{{ errorTitle }}</span>
           </div>
           <p class="error-card__description">{{ errorDescription }}</p>
@@ -200,10 +172,7 @@
           <div class="error-card__footer">
             <span v-if="errorCode" class="error-card__code">{{ errorCode }}</span>
             <button v-if="errorRetryable" class="error-card__retry" type="button" @click="$emit('regenerate')">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="23 4 23 10 17 10"/>
-                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-              </svg>
+              <el-icon><RefreshRight /></el-icon>
               {{ $t('chat.retry') }}
             </button>
           </div>
@@ -244,10 +213,7 @@
             type="button"
             @click="downloadFile(attachment)"
           >
-            <svg class="message-attachment__icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-              <polyline points="14 2 14 8 20 8"/>
-            </svg>
+            <el-icon class="message-attachment__icon"><Document /></el-icon>
             <span class="message-attachment__name">{{ attachment.name }}</span>
             <span class="message-attachment__meta">{{ formatFileSize(attachment.size) }}</span>
           </button>
@@ -270,13 +236,8 @@
             :title="copyState === 'copied' ? $t('chat.copied') : $t('chat.copy')"
             @click="copyMessage"
           >
-            <svg v-if="copyState !== 'copied'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="9" y="9" width="13" height="13" rx="2"/>
-              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-            </svg>
-            <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="20 6 9 17 4 12"/>
-            </svg>
+            <el-icon v-if="copyState !== 'copied'"><CopyDocument /></el-icon>
+            <el-icon v-else><Select /></el-icon>
           </button>
           <!-- 朗读 TTS（仅 assistant） -->
           <button
@@ -288,18 +249,9 @@
             :disabled="ttsState === 'loading'"
             @click="handleTts"
           >
-            <svg v-if="ttsState === 'loading'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="tts-loading-icon">
-              <circle cx="12" cy="12" r="10"/>
-              <path d="M12 6v6l4 2"/>
-            </svg>
-            <svg v-else-if="ttsState === 'playing'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>
-            </svg>
-            <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-              <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
-              <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
-            </svg>
+            <el-icon v-if="ttsState === 'loading'" class="tts-loading-icon"><Loading /></el-icon>
+            <el-icon v-else-if="ttsState === 'playing'"><VideoPause /></el-icon>
+            <el-icon v-else><Microphone /></el-icon>
           </button>
           <!-- 重新生成（仅 assistant） -->
           <button
@@ -309,10 +261,7 @@
             :title="$t('chat.regenerate')"
             @click="$emit('regenerate')"
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="23 4 23 10 17 10"/>
-              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-            </svg>
+            <el-icon><RefreshRight /></el-icon>
           </button>
           <!-- 时间戳（inline） -->
           <span class="action-time">{{ formattedTime }}</span>
@@ -324,6 +273,20 @@
 <script setup lang="ts">
 import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
+import {
+  ArrowDown,
+  CloseBold,
+  CopyDocument,
+  Document,
+  Loading,
+  Microphone,
+  Opportunity,
+  RefreshRight,
+  Select,
+  Tools,
+  VideoPause,
+  WarningFilled,
+} from '@element-plus/icons-vue'
 import { useMarkdownRenderer } from '@/composables/useMarkdownRenderer'
 import { useAuthenticatedAttachment } from '@/composables/useAuthenticatedAttachment'
 import { http } from '@/api'

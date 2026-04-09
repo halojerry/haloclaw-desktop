@@ -1,12 +1,12 @@
 <template>
   <div class="mc-page-shell settings-shell">
-    <div class="mc-page-frame">
+    <div class="mc-page-frame settings-frame">
       <div class="mc-page-inner settings-layout">
         <div class="settings-nav mc-surface-card">
           <div class="settings-nav__intro">
-            <div class="mc-page-kicker">System</div>
+            <div class="mc-page-kicker">{{ t('settings.kicker') }}</div>
             <h2 class="nav-title">{{ t('settings.title') }}</h2>
-            <p class="nav-desc">Tune the machine, shape the context, and keep the product coherent as it grows.</p>
+            <p class="nav-desc">{{ t('settings.layoutDesc') }}</p>
           </div>
           <template v-for="section in sections" :key="section.id">
             <div v-if="section.isDivider" class="nav-divider">{{ section.label }}</div>
@@ -23,7 +23,9 @@
         </div>
 
         <div class="settings-content mc-surface-card">
-          <router-view />
+          <div class="settings-content__inner">
+            <router-view />
+          </div>
         </div>
       </div>
     </div>
@@ -129,13 +131,40 @@ function isActive(path: string) {
 <style scoped>
 .settings-shell {
   background: transparent;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
-.settings-layout { display: flex; min-height: calc(100vh - 120px); gap: 20px; }
-.settings-nav { width: 270px; min-width: 270px; padding: 18px 14px; align-self: flex-start; }
-.settings-nav__intro { padding: 6px 8px 16px; }
+.settings-frame {
+  height: min(calc(100vh - 28px), 100%);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.settings-layout {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  gap: 18px;
+}
+
+.settings-nav {
+  width: 286px;
+  min-width: 286px;
+  padding: 18px 14px;
+  overflow-y: auto;
+  align-self: stretch;
+}
+
+.settings-nav__intro {
+  padding: 6px 8px 16px;
+  border-bottom: 1px solid var(--mc-border-light);
+  margin-bottom: 8px;
+}
+
 .nav-title { font-size: 28px; font-weight: 800; color: var(--mc-text-primary); letter-spacing: -0.04em; margin: 0 0 6px; }
-.nav-desc { color: var(--mc-text-secondary); font-size: 13px; line-height: 1.65; }
+.nav-desc { color: var(--mc-text-secondary); font-size: 13px; line-height: 1.65; margin: 0; }
 .nav-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border: none; background: none; border-radius: 14px; font-size: 14px; font-weight: 500; color: var(--mc-text-secondary); cursor: pointer; transition: all 0.15s; text-align: left; text-decoration: none; }
 .nav-item:hover { background: var(--mc-bg-muted); color: var(--mc-text-primary); }
 .nav-item.active { background: var(--mc-primary-bg); color: var(--mc-primary); font-weight: 600; box-shadow: inset 0 0 0 1px rgba(217, 109, 70, 0.08); }
@@ -143,11 +172,32 @@ function isActive(path: string) {
 .nav-icon { width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .nav-icon :deep(svg) { width: 18px; height: 18px; display: block; }
 .nav-divider { font-size: 11px; font-weight: 700; color: var(--mc-text-tertiary); text-transform: uppercase; letter-spacing: 0.1em; padding: 18px 8px 8px; margin-top: 4px; }
-.settings-content { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 24px; min-height: 720px; }
+.settings-content {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 22px;
+}
+
+.settings-content__inner {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+}
 
 @media (max-width: 900px) {
-  .settings-layout { flex-direction: column; }
-  .settings-nav { width: 100%; min-width: 100%; }
-  .settings-content { min-height: 0; }
+  .settings-frame {
+    height: auto;
+    min-height: calc(100vh - 28px);
+    overflow: visible;
+  }
+
+  .settings-layout { flex-direction: column; height: auto; }
+  .settings-nav { width: 100%; min-width: 100%; max-height: none; align-self: auto; }
+  .settings-content { min-height: 0; overflow: visible; }
+  .settings-content__inner { overflow: visible; padding-right: 0; }
 }
 </style>

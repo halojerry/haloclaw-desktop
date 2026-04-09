@@ -1,10 +1,10 @@
 <template>
   <div class="mc-page-shell wiki-shell">
-    <div class="mc-page-frame">
-      <div class="mc-page-inner">
+    <div class="mc-page-frame wiki-frame">
+      <div class="mc-page-inner wiki-inner">
         <div class="mc-page-header">
           <div>
-            <div class="mc-page-kicker">Knowledge Engine</div>
+            <div class="mc-page-kicker">{{ t('wiki.kicker') }}</div>
             <h1 class="mc-page-title">{{ t('nav.wiki') }}</h1>
             <p class="mc-page-desc">{{ t('wiki.desc') }}</p>
           </div>
@@ -21,7 +21,7 @@
       <div class="wiki-sidebar mc-surface-card">
         <div class="sidebar-section">
           <h3 class="sidebar-title">{{ t('wiki.knowledgeBases') }}</h3>
-          <div v-if="store.loading" class="text-center py-4 text-gray-400">Loading...</div>
+          <div v-if="store.loading" class="text-center py-4 text-gray-400">{{ t('common.loading') }}</div>
           <div v-else-if="store.knowledgeBases.length === 0" class="text-center py-4 text-gray-400">
             {{ t('wiki.noKB') }}
           </div>
@@ -33,10 +33,10 @@
             >
               <div class="kb-item-name">{{ kb.name }}</div>
               <div class="kb-item-meta">
-                <span>{{ kb.pageCount }} pages</span>
-                <span>{{ kb.rawCount }} sources</span>
+                <span>{{ t('wiki.pageCount', { count: kb.pageCount }) }}</span>
+                <span>{{ t('wiki.sourceCount', { count: kb.rawCount }) }}</span>
               </div>
-              <span class="kb-status" :class="kb.status">{{ kb.status }}</span>
+              <span class="kb-status" :class="kb.status">{{ t(`wiki.status.${kb.status}`) }}</span>
             </div>
           </div>
         </div>
@@ -77,7 +77,7 @@
         </div>
 
         <!-- Tab navigation -->
-        <div v-else>
+        <div v-else class="wiki-content-body">
           <div class="content-tabs">
             <button
               v-for="tab in tabs" :key="tab.key"
@@ -102,7 +102,7 @@
           </div>
 
           <!-- Config Tab -->
-          <div v-if="activeTab === 'config'" class="tab-content">
+          <div v-if="activeTab === 'config'" class="tab-content tab-content--config">
             <WikiConfig />
           </div>
         </div>
@@ -189,6 +189,22 @@ onMounted(() => {
 <style scoped>
 .wiki-shell {
   background: transparent;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.wiki-frame {
+  height: min(calc(100vh - 28px), 100%);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.wiki-inner {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
 }
 
 .btn-primary { display: flex; align-items: center; gap: 6px; padding: 10px 16px; background: linear-gradient(135deg, var(--mc-primary), var(--mc-primary-hover)); color: white; border: none; border-radius: 14px; font-size: 14px; font-weight: 600; cursor: pointer; box-shadow: var(--mc-shadow-soft); }
@@ -198,20 +214,20 @@ onMounted(() => {
 .btn-secondary:hover { background: var(--mc-bg-sunken); }
 
 /* Layout */
-.wiki-layout { display: flex; gap: 18px; min-height: calc(100vh - 200px); overflow: hidden; }
+.wiki-layout { display: flex; gap: 16px; flex: 1; min-height: 0; overflow: hidden; }
 
-.wiki-sidebar { width: 320px; min-width: 320px; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 18px; }
+.wiki-sidebar { width: 300px; min-width: 300px; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; min-height: 0; }
 
-.sidebar-section { display: flex; flex-direction: column; gap: 10px; }
+.sidebar-section { display: flex; flex-direction: column; gap: 8px; }
 
 .sidebar-title { font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--mc-text-tertiary); letter-spacing: 0.1em; }
 
-.sidebar-search { width: 100%; padding: 10px 12px; border: 1px solid var(--mc-border); border-radius: 12px; font-size: 13px; background: var(--mc-bg-muted); color: var(--mc-text-primary); outline: none; }
+.sidebar-search { width: 100%; padding: 9px 12px; border: 1px solid var(--mc-border); border-radius: 12px; font-size: 13px; background: var(--mc-bg-muted); color: var(--mc-text-primary); outline: none; }
 .sidebar-search:focus { border-color: var(--mc-primary); }
 
 .kb-list, .page-list { display: flex; flex-direction: column; gap: 4px; }
 
-.kb-item, .page-item { padding: 12px 14px; border-radius: 16px; cursor: pointer; transition: background 0.15s, transform 0.15s; position: relative; border: 1px solid transparent; }
+.kb-item, .page-item { padding: 10px 12px; border-radius: 16px; cursor: pointer; transition: background 0.15s, transform 0.15s; position: relative; border: 1px solid transparent; }
 .kb-item:hover, .page-item:hover { background: var(--mc-bg-muted); transform: translateY(-1px); }
 .kb-item.active, .page-item.active { background: var(--mc-primary-bg); border-color: rgba(217, 109, 70, 0.12); }
 
@@ -225,16 +241,28 @@ onMounted(() => {
 .kb-status.error { background: var(--mc-danger-bg); color: var(--mc-danger); }
 
 /* Content area */
-.wiki-content { flex: 1; overflow-y: auto; min-width: 0; padding: 20px; }
+.wiki-content { flex: 1; overflow: hidden; min-width: 0; padding: 16px; display: flex; flex-direction: column; min-height: 0; }
 
-.content-tabs { display: inline-flex; gap: 4px; padding: 4px; background: var(--mc-bg-muted); border-radius: 16px; margin-bottom: 20px; border: 1px solid var(--mc-border-light); }
-.tab-btn { padding: 10px 16px; border: none; background: none; cursor: pointer; font-size: 14px; color: var(--mc-text-secondary); border-radius: 12px; transition: all 0.15s; font-weight: 600; }
+.wiki-content-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.content-tabs { display: inline-flex; gap: 4px; padding: 4px; background: var(--mc-bg-muted); border-radius: 16px; margin-bottom: 14px; border: 1px solid var(--mc-border-light); align-self: flex-start; }
+.tab-btn { padding: 9px 14px; border: none; background: none; cursor: pointer; font-size: 13px; color: var(--mc-text-secondary); border-radius: 12px; transition: all 0.15s; font-weight: 600; }
 .tab-btn:hover { color: var(--mc-text-primary); }
 .tab-btn.active { color: var(--mc-primary); background: var(--mc-bg-elevated); box-shadow: var(--mc-shadow-soft); }
 
-.tab-content { min-height: 400px; }
+.tab-content { flex: 1; min-height: 0; overflow-y: auto; padding-right: 2px; }
 
-.empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 300px; color: var(--mc-text-tertiary); text-align: center; padding: 32px; }
+.tab-content--config {
+  overflow: hidden;
+  padding-right: 0;
+}
+
+.empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 240px; color: var(--mc-text-tertiary); text-align: center; padding: 24px; }
 
 /* Modal */
 .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 20px; }
@@ -250,13 +278,32 @@ onMounted(() => {
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
 
 @media (max-width: 980px) {
+  .wiki-frame {
+    height: 100%;
+    min-height: calc(100vh - 28px);
+  }
+
   .wiki-layout {
     flex-direction: column;
+    overflow: visible;
   }
 
   .wiki-sidebar {
     width: 100%;
     min-width: 0;
+    max-height: 280px;
+  }
+
+  .wiki-content {
+    overflow: visible;
+  }
+
+  .tab-content {
+    overflow: visible;
+  }
+
+  .tab-content--config {
+    overflow: visible;
   }
 }
 </style>

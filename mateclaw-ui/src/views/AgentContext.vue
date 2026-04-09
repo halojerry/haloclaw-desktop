@@ -1,12 +1,15 @@
 <template>
-  <div class="workspace-container">
+  <div class="mc-page-shell agent-context-shell">
+    <div class="mc-page-frame agent-context-frame">
+      <div class="mc-page-inner agent-context-container">
     <!-- 顶部栏 -->
     <div class="workspace-header">
-      <div>
+      <div class="workspace-header-copy">
+        <div class="mc-page-kicker">{{ t('agentContext.kicker') }}</div>
         <h1 class="page-title">{{ t('agentContext.title') }}</h1>
         <p class="page-desc">{{ t('agentContext.desc') }}</p>
       </div>
-      <div class="header-actions">
+      <div class="header-actions mc-surface-card">
         <select v-model="selectedAgentId" class="agent-select" @change="onAgentChange">
           <option value="" disabled>{{ t('agentContext.selectAgent') }}</option>
           <option v-for="agent in agents" :key="agent.id" :value="agent.id">
@@ -195,6 +198,8 @@
           <button class="btn-secondary" @click="showNewFileDialog = false">{{ t('common.cancel') }}</button>
           <button class="btn-primary" @click="createNewFile" :disabled="!isValidFilename">{{ t('common.create') }}</button>
         </div>
+      </div>
+    </div>
       </div>
     </div>
   </div>
@@ -437,12 +442,32 @@ function formatTime(time?: string): string {
 </script>
 
 <style scoped>
-.workspace-container { height: 100%; display: flex; flex-direction: column; overflow: hidden; background: var(--mc-bg); }
-.workspace-header { display: flex; align-items: flex-start; justify-content: space-between; padding: 20px 24px 12px; flex-shrink: 0; }
-.page-title { font-size: 20px; font-weight: 700; color: var(--mc-text-primary); margin: 0 0 4px; }
-.page-desc { font-size: 14px; color: var(--mc-text-secondary); margin: 0; }
-.header-actions { display: flex; gap: 8px; align-items: center; }
-.agent-select { padding: 8px 12px; border: 1px solid var(--mc-border); border-radius: 8px; background: var(--mc-bg-elevated); color: var(--mc-text-primary); font-size: 14px; outline: none; min-width: 200px; cursor: pointer; }
+.agent-context-shell {
+  background: transparent;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.agent-context-frame {
+  height: min(calc(100vh - 28px), 100%);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.agent-context-container {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.workspace-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding-bottom: 14px; flex-shrink: 0; border-bottom: 1px solid var(--mc-border-light); }
+.workspace-header-copy { min-width: 0; }
+.page-title { font-size: clamp(28px, 3vw, 40px); font-weight: 800; color: var(--mc-text-primary); letter-spacing: -0.04em; margin: 0 0 8px; }
+.page-desc { font-size: 15px; color: var(--mc-text-secondary); margin: 0; line-height: 1.7; max-width: 720px; }
+.header-actions { display: flex; gap: 8px; align-items: center; padding: 12px; border-radius: 18px; flex-shrink: 0; }
+.agent-select { padding: 10px 14px; border: 1px solid var(--mc-border); border-radius: 12px; background: var(--mc-bg-elevated); color: var(--mc-text-primary); font-size: 14px; outline: none; min-width: 240px; cursor: pointer; }
 .agent-select:focus { border-color: var(--mc-primary); }
 
 /* 空状态 */
@@ -451,15 +476,15 @@ function formatTime(time?: string): string {
 .empty-state h3 { font-size: 16px; color: var(--mc-text-secondary); margin: 0; }
 
 /* 主体 */
-.workspace-body { display: flex; flex: 1; overflow: hidden; padding: 0 24px 24px; gap: 16px; }
+.workspace-body { display: flex; flex: 1; overflow: hidden; padding-top: 18px; gap: 16px; min-height: 0; }
 
 /* 左侧面板 */
 .file-list-panel { width: 300px; min-width: 260px; display: flex; flex-direction: column; }
-.panel-card { background: var(--mc-bg-elevated); border: 1px solid var(--mc-border); border-radius: 12px; display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+.panel-card { background: linear-gradient(180deg, var(--mc-bg-elevated), var(--mc-bg-muted)); border: 1px solid var(--mc-border); border-radius: 22px; display: flex; flex-direction: column; flex: 1; overflow: hidden; box-shadow: var(--mc-shadow-soft); }
 .panel-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 0; }
 .section-title { font-size: 14px; font-weight: 600; color: var(--mc-text-primary); margin: 0; }
 .panel-actions { display: flex; gap: 4px; }
-.icon-btn { width: 28px; height: 28px; border: 1px solid var(--mc-border); background: var(--mc-bg-elevated); border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--mc-text-secondary); transition: all 0.15s; }
+.icon-btn { width: 30px; height: 30px; border: 1px solid var(--mc-border); background: var(--mc-bg-elevated); border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--mc-text-secondary); transition: all 0.15s; }
 .icon-btn:hover { background: var(--mc-bg-sunken); color: var(--mc-text-primary); }
 .info-text { font-size: 12px; color: var(--mc-text-tertiary); padding: 6px 16px 0; margin: 0; line-height: 1.4; }
 .divider { height: 1px; background: var(--mc-border-light); margin: 10px 16px; }
@@ -521,9 +546,9 @@ function formatTime(time?: string): string {
 .editor-content.mode-split .editor-textarea { flex: 1; min-width: 0; }
 .editor-content.mode-split .markdown-preview { flex: 1; min-width: 0; }
 
-.editor-textarea { flex: 1; width: 100%; resize: none; border: 1px solid var(--mc-border); border-radius: 8px; padding: 12px; font-family: 'SF Mono', Monaco, Consolas, 'Courier New', monospace; font-size: 13px; line-height: 1.6; color: var(--mc-text-primary); background: var(--mc-bg-sunken); outline: none; tab-size: 2; }
+.editor-textarea { flex: 1; width: 100%; resize: none; border: 1px solid var(--mc-border); border-radius: 14px; padding: 14px; font-family: 'SF Mono', Monaco, Consolas, 'Courier New', monospace; font-size: 13px; line-height: 1.6; color: var(--mc-text-primary); background: var(--mc-bg-sunken); outline: none; tab-size: 2; }
 .editor-textarea:focus { border-color: var(--mc-primary); box-shadow: 0 0 0 2px rgba(217, 119, 87, 0.1); }
-.markdown-preview { flex: 1; overflow-y: auto; padding: 16px; border: 1px solid var(--mc-border); border-radius: 8px; background: var(--mc-bg-sunken); font-size: 14px; line-height: 1.7; color: var(--mc-text-primary); }
+.markdown-preview { flex: 1; overflow-y: auto; padding: 16px; border: 1px solid var(--mc-border); border-radius: 14px; background: var(--mc-bg-sunken); font-size: 14px; line-height: 1.7; color: var(--mc-text-primary); }
 .markdown-preview::-webkit-scrollbar { width: 4px; }
 .markdown-preview::-webkit-scrollbar-thumb { background: var(--mc-border); border-radius: 2px; }
 
@@ -549,4 +574,28 @@ function formatTime(time?: string): string {
 .btn-primary:disabled { background: var(--mc-border); cursor: not-allowed; }
 .btn-secondary { padding: 8px 16px; background: var(--mc-bg-elevated); color: var(--mc-text-primary); border: 1px solid var(--mc-border); border-radius: 8px; font-size: 14px; cursor: pointer; }
 .btn-secondary:hover { background: var(--mc-bg-sunken); }
+
+@media (max-width: 900px) {
+  .agent-context-frame {
+    height: auto;
+    min-height: calc(100vh - 28px);
+    overflow: visible;
+  }
+
+  .workspace-header,
+  .workspace-body {
+    flex-direction: column;
+  }
+
+  .header-actions,
+  .file-list-panel {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .agent-select {
+    width: 100%;
+    min-width: 0;
+  }
+}
 </style>

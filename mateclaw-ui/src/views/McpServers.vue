@@ -1,34 +1,35 @@
 <template>
   <div class="page-container">
-    <div class="page-header">
-      <div>
-        <h1 class="page-title">{{ t('mcp.title') }}</h1>
-        <p class="page-desc">{{ t('mcp.desc') }}</p>
+    <div class="page-shell">
+      <div class="page-header">
+        <div class="page-lead">
+          <div class="page-kicker">{{ t('mcp.kicker') }}</div>
+          <h1 class="page-title">{{ t('mcp.title') }}</h1>
+          <p class="page-desc">{{ t('mcp.desc') }}</p>
+        </div>
+        <div class="header-actions">
+          <button class="btn-secondary" @click="refreshAll" :disabled="refreshing">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+            </svg>
+            {{ t('mcp.refreshAll') }}
+          </button>
+          <button class="btn-primary" @click="openCreateModal">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            {{ t('mcp.addServer') }}
+          </button>
+        </div>
       </div>
-      <div class="header-actions">
-        <button class="btn-secondary" @click="refreshAll" :disabled="refreshing">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
-            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-          </svg>
-          {{ t('mcp.refreshAll') }}
-        </button>
-        <button class="btn-primary" @click="openCreateModal">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-          </svg>
-          {{ t('mcp.addServer') }}
-        </button>
-      </div>
-    </div>
 
-    <!-- Server 列表 -->
-    <div class="tools-table-wrap">
-      <table class="tools-table">
+      <div class="page-stage">
+        <div class="tools-table-wrap">
+          <table class="tools-table">
         <thead>
           <tr>
             <th>{{ t('mcp.columns.name') }}</th>
-            <th>{{ t('mcp.columns.transport') }}</th>
             <th>{{ t('mcp.columns.lastStatus') }}</th>
             <th>{{ t('mcp.columns.toolCount') }}</th>
             <th>{{ t('mcp.columns.enabled') }}</th>
@@ -48,20 +49,23 @@
                   </svg>
                 </div>
                 <div>
-                  <div class="tool-name">{{ server.name }}</div>
-                  <div class="tool-desc">{{ server.description || '-' }}</div>
+                  <div class="tool-name" :title="server.name">{{ server.name }}</div>
+                  <div class="tool-type-inline">
+                    <span class="type-badge" :class="'type-' + server.transport">
+                      {{ t('mcp.transport.' + server.transport) }}
+                    </span>
+                  </div>
+                  <div class="tool-desc" :title="server.description || '-'">{{ server.description || '-' }}</div>
                 </div>
               </div>
             </td>
             <td>
-              <span class="type-badge" :class="'type-' + server.transport">
-                {{ t('mcp.transport.' + server.transport) }}
-              </span>
-            </td>
-            <td>
-              <span class="status-badge" :class="'status-' + server.lastStatus">
-                {{ t('mcp.status.' + (server.lastStatus || 'disconnected')) }}
-              </span>
+              <div class="status-stack">
+                <span class="status-badge" :class="'status-' + server.lastStatus" :title="t('mcp.status.' + (server.lastStatus || 'disconnected'))">
+                    {{ t('mcp.status.' + (server.lastStatus || 'disconnected')) }}
+                </span>
+                <span v-if="server.lastConnectedTime" class="status-time" :title="server.lastConnectedTime">{{ server.lastConnectedTime }}</span>
+              </div>
               <div v-if="server.lastError" class="status-error" :title="server.lastError">
                 {{ truncate(server.lastError, 40) }}
               </div>
@@ -77,6 +81,11 @@
             </td>
             <td>
               <div class="row-actions">
+                <button class="row-btn" @click="openDetailModal(server)" :title="t('common.view')">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="3"/><path d="M2.05 12a9.94 9.94 0 0 1 19.9 0 9.94 9.94 0 0 1-19.9 0z"/>
+                  </svg>
+                </button>
                 <button class="row-btn" @click="testConnection(server)" :disabled="testingId === server.id" :title="t('mcp.actions.test')">
                   <svg v-if="testingId !== server.id" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
@@ -105,7 +114,7 @@
             </td>
           </tr>
           <tr v-if="servers.length === 0">
-            <td colspan="6" class="empty-row">
+            <td colspan="5" class="empty-row">
               <div class="empty-state">
                 <span class="empty-icon">
                   <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="color: var(--mc-text-tertiary)">
@@ -121,10 +130,67 @@
             </td>
           </tr>
         </tbody>
-      </table>
+          </table>
+        </div>
+      </div>
     </div>
 
-    <!-- Test Result Toast -->
+    <div v-if="detailServer" class="modal-overlay" @click.self="closeDetailModal">
+      <div class="modal modal-wide">
+        <div class="modal-header">
+          <h2>{{ detailServer.name }}</h2>
+          <button class="modal-close" @click="closeDetailModal">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div class="modal-body detail-grid">
+          <div class="detail-item">
+            <div class="detail-label">{{ t('mcp.columns.transport') }}</div>
+            <div class="detail-value">{{ t('mcp.transport.' + detailServer.transport) }}</div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">{{ t('mcp.columns.lastStatus') }}</div>
+            <div class="detail-value">{{ t('mcp.status.' + (detailServer.lastStatus || 'disconnected')) }}</div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">{{ t('mcp.columns.toolCount') }}</div>
+            <div class="detail-value">{{ detailServer.toolCount || 0 }}</div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">{{ t('mcp.fields.enabled') }}</div>
+            <div class="detail-value">{{ detailServer.enabled ? 'Enabled' : 'Disabled' }}</div>
+          </div>
+          <div class="detail-item detail-item-full" v-if="detailServer.transport === 'stdio'">
+            <div class="detail-label">{{ t('mcp.fields.command') }}</div>
+            <div class="detail-value detail-block mono">{{ detailServer.command || '-' }}</div>
+            <div class="detail-subvalue" v-if="detailServer.argsJson">{{ detailServer.argsJson }}</div>
+          </div>
+          <div class="detail-item detail-item-full" v-else>
+            <div class="detail-label">{{ t('mcp.fields.url') }}</div>
+            <div class="detail-value detail-block mono">{{ detailServer.url || '-' }}</div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">{{ t('mcp.fields.connectTimeout') }}</div>
+            <div class="detail-value">{{ detailServer.connectTimeoutSeconds || 30 }}</div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">{{ t('mcp.fields.readTimeout') }}</div>
+            <div class="detail-value">{{ detailServer.readTimeoutSeconds || 30 }}</div>
+          </div>
+          <div class="detail-item detail-item-full" v-if="detailServer.lastError">
+            <div class="detail-label">Error</div>
+            <div class="detail-value detail-block">{{ detailServer.lastError }}</div>
+          </div>
+          <div class="detail-item detail-item-full" v-if="detailServer.description">
+            <div class="detail-label">{{ t('mcp.fields.description') }}</div>
+            <div class="detail-value detail-block">{{ detailServer.description }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <transition name="toast">
       <div v-if="testResult" class="test-toast" :class="testResult.success ? 'toast-success' : 'toast-error'">
         <div class="toast-title">{{ testResult.success ? t('mcp.testResult.success') : t('mcp.testResult.failed') }}</div>
@@ -136,7 +202,6 @@
       </div>
     </transition>
 
-    <!-- Modal -->
     <div v-if="showModal" class="modal-overlay" @click.self="closeModal">
       <div class="modal modal-wide">
         <div class="modal-header">
@@ -167,7 +232,6 @@
               <input v-model="form.description" class="form-input" :placeholder="t('mcp.placeholders.description')" />
             </div>
 
-            <!-- stdio fields -->
             <template v-if="form.transport === 'stdio'">
               <div class="form-group">
                 <label class="form-label">{{ t('mcp.fields.command') }} *</label>
@@ -187,7 +251,6 @@
               </div>
             </template>
 
-            <!-- http/sse fields -->
             <template v-else>
               <div class="form-group full-width">
                 <label class="form-label">{{ t('mcp.fields.url') }} *</label>
@@ -266,6 +329,7 @@ interface TestResultData {
 const servers = ref<McpServer[]>([])
 const showModal = ref(false)
 const editing = ref<McpServer | null>(null)
+const detailServer = ref<McpServer | null>(null)
 const refreshing = ref(false)
 const testingId = ref<number | null>(null)
 const testResult = ref<TestResultData | null>(null)
@@ -295,14 +359,12 @@ const canSave = computed(() => {
 
 onMounted(loadServers)
 
-/** 防止并发 loadServers 导致旧数据覆盖新数据 */
 let loadGeneration = 0
 
 async function loadServers() {
   const gen = ++loadGeneration
   try {
     const res: any = await mcpApi.list()
-    // 只有最后一次发起的请求才写入 servers
     if (gen === loadGeneration) {
       servers.value = res.data || []
     }
@@ -341,6 +403,14 @@ function openEditModal(server: McpServer) {
 function closeModal() {
   showModal.value = false
   editing.value = null
+}
+
+function openDetailModal(server: McpServer) {
+  detailServer.value = server
+}
+
+function closeDetailModal() {
+  detailServer.value = null
 }
 
 async function saveServer() {
@@ -392,7 +462,6 @@ async function testConnection(server: McpServer) {
   try {
     const res: any = await mcpApi.test(server.id)
     testResult.value = res.data
-    // Auto-hide after 4s
     setTimeout(() => { testResult.value = null }, 4000)
   } catch (e: any) {
     testResult.value = { success: false, message: e?.message || 'Unknown error', toolCount: 0, latencyMs: 0, discoveredTools: [] }
@@ -421,30 +490,68 @@ function truncate(str: string, len: number) {
 </script>
 
 <style scoped>
-.page-container { height: 100%; overflow-y: auto; padding: 24px; background: var(--mc-bg); }
-.page-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 24px; }
-.page-title { font-size: 20px; font-weight: 700; color: var(--mc-text-primary); margin: 0 0 4px; }
-.page-desc { font-size: 14px; color: var(--mc-text-secondary); margin: 0; }
-.header-actions { display: flex; gap: 8px; }
-.btn-primary { display: flex; align-items: center; gap: 6px; padding: 8px 16px; background: var(--mc-primary); color: white; border: none; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; }
+.page-container {
+  height: 100%;
+  overflow-y: auto;
+  padding: 0;
+  background: transparent;
+}
+
+.page-shell {
+  min-height: 100%;
+  padding: 24px;
+  background:
+    radial-gradient(circle at top left, color-mix(in srgb, var(--mc-primary-bg) 34%, transparent) 0, transparent 36%),
+    linear-gradient(180deg, color-mix(in srgb, var(--mc-bg-elevated) 78%, white 22%) 0%, var(--mc-bg) 100%);
+}
+
+.page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+.page-lead { display: flex; flex-direction: column; gap: 8px; }
+.page-kicker {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 6px 12px;
+  border: 1px solid color-mix(in srgb, var(--mc-primary) 18%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--mc-primary-bg) 72%, var(--mc-bg-elevated) 28%);
+  color: var(--mc-primary-hover);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.page-title { font-size: clamp(28px, 4vw, 40px); line-height: 0.95; font-weight: 800; color: var(--mc-text-primary); margin: 0; }
+.page-desc { max-width: 620px; font-size: 15px; line-height: 1.55; color: var(--mc-text-secondary); margin: 0; }
+.header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn-primary { display: flex; align-items: center; gap: 6px; padding: 10px 16px; background: var(--mc-primary); color: white; border: none; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; }
 .btn-primary:hover { background: var(--mc-primary-hover); }
 .btn-primary:disabled { background: var(--mc-border); cursor: not-allowed; }
-.btn-secondary { display: flex; align-items: center; gap: 6px; padding: 8px 16px; background: var(--mc-bg-elevated); color: var(--mc-text-primary); border: 1px solid var(--mc-border); border-radius: 8px; font-size: 14px; cursor: pointer; }
+.btn-secondary { display: flex; align-items: center; gap: 6px; padding: 10px 16px; background: var(--mc-bg-elevated); color: var(--mc-text-primary); border: 1px solid var(--mc-border); border-radius: 10px; font-size: 14px; cursor: pointer; white-space: nowrap; }
 .btn-secondary:hover { background: var(--mc-bg-sunken); }
 .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
-.tools-table-wrap { background: var(--mc-bg-elevated); border: 1px solid var(--mc-border); border-radius: 12px; overflow: hidden; }
-.tools-table { width: 100%; border-collapse: collapse; }
-.tools-table th { padding: 12px 16px; text-align: left; font-size: 12px; font-weight: 600; color: var(--mc-text-secondary); text-transform: uppercase; letter-spacing: 0.05em; background: var(--mc-bg-sunken); border-bottom: 1px solid var(--mc-border); }
+.page-stage {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--mc-bg-elevated) 96%, white 4%) 0%, var(--mc-bg-elevated) 100%);
+  border: 1px solid var(--mc-border);
+  border-radius: 18px;
+  padding: 12px;
+  box-shadow: 0 18px 48px rgba(152, 93, 63, 0.06);
+}
+
+.tools-table-wrap { background: var(--mc-bg-elevated); border: 1px solid var(--mc-border); border-radius: 14px; overflow-x: auto; overflow-y: hidden; }
+.tools-table { width: 100%; table-layout: fixed; border-collapse: collapse; }
+.tools-table th { position: sticky; top: 0; z-index: 1; padding: 12px 16px; text-align: left; font-size: 11px; font-weight: 700; color: var(--mc-text-secondary); text-transform: uppercase; letter-spacing: 0.08em; background: color-mix(in srgb, var(--mc-bg-sunken) 86%, white 14%); border-bottom: 1px solid var(--mc-border); }
 .tool-row { border-bottom: 1px solid var(--mc-border-light); transition: background 0.1s; }
 .tool-row:hover { background: var(--mc-bg-sunken); }
 .tool-row:last-child { border-bottom: none; }
-.tools-table td { padding: 14px 16px; font-size: 14px; color: var(--mc-text-primary); }
+.tools-table td { padding: 16px; font-size: 14px; color: var(--mc-text-primary); vertical-align: top; }
 .tool-info { display: flex; align-items: center; gap: 10px; }
 .tool-icon-wrap { width: 32px; height: 32px; background: var(--mc-bg-sunken); border-radius: 8px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; color: var(--mc-text-secondary); }
 .status-icon-connected { color: var(--mc-primary); background: var(--mc-primary-bg); }
 .status-icon-error { color: var(--mc-danger); background: var(--mc-danger-bg); }
-.tool-name { font-weight: 500; color: var(--mc-text-primary); }
-.tool-desc { font-size: 12px; color: var(--mc-text-tertiary); margin-top: 1px; }
+.tool-name { max-width: 180px; font-weight: 700; color: var(--mc-text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-type-inline { margin-top: 6px; }
+.tool-desc { max-width: 240px; font-size: 12px; color: var(--mc-text-tertiary); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .type-badge { padding: 3px 10px; border-radius: 10px; font-size: 12px; font-weight: 500; }
 .type-stdio { background: var(--mc-primary-bg); color: var(--mc-primary); }
 .type-sse { background: var(--mc-primary-bg); color: var(--mc-primary-hover); }
@@ -452,6 +559,8 @@ function truncate(str: string, len: number) {
 .status-badge { padding: 3px 10px; border-radius: 10px; font-size: 12px; font-weight: 500; }
 .status-connected { background: var(--mc-primary-bg); color: var(--mc-primary); }
 .status-disconnected { background: var(--mc-bg-sunken); color: var(--mc-text-tertiary); }
+.status-stack { display: flex; flex-direction: column; gap: 6px; }
+.status-time { font-size: 12px; color: var(--mc-text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status-error { font-size: 11px; color: var(--mc-danger); margin-top: 2px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tool-count { font-weight: 600; color: var(--mc-text-primary); }
 .toggle-switch { position: relative; display: inline-block; width: 36px; height: 20px; cursor: pointer; }
@@ -460,8 +569,8 @@ function truncate(str: string, len: number) {
 .toggle-slider::before { content: ''; position: absolute; width: 14px; height: 14px; left: 3px; top: 3px; background: var(--mc-bg-elevated); border-radius: 50%; transition: 0.2s; }
 .toggle-switch input:checked + .toggle-slider { background: var(--mc-primary); }
 .toggle-switch input:checked + .toggle-slider::before { transform: translateX(16px); }
-.row-actions { display: flex; gap: 4px; }
-.row-btn { width: 28px; height: 28px; border: 1px solid var(--mc-border); background: var(--mc-bg-elevated); border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--mc-text-secondary); transition: all 0.15s; }
+.row-actions { display: flex; gap: 6px; }
+.row-btn { width: 30px; height: 30px; border: 1px solid var(--mc-border); background: var(--mc-bg-elevated); border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--mc-text-secondary); transition: all 0.15s; }
 .row-btn:hover { background: var(--mc-bg-sunken); }
 .row-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .row-btn.danger:hover { background: var(--mc-danger-bg); border-color: var(--mc-danger); color: var(--mc-danger); }
@@ -470,7 +579,6 @@ function truncate(str: string, len: number) {
 .empty-sub { font-size: 13px; margin: 0; }
 .empty-state p { font-size: 14px; margin: 0; }
 
-/* Toast */
 .test-toast { position: fixed; bottom: 24px; right: 24px; padding: 14px 20px; border-radius: 10px; z-index: 2000; box-shadow: 0 4px 20px rgba(0,0,0,0.15); }
 .toast-success { background: var(--mc-primary); color: white; }
 .toast-error { background: var(--mc-danger); color: white; }
@@ -479,7 +587,6 @@ function truncate(str: string, len: number) {
 .toast-enter-active, .toast-leave-active { transition: all 0.3s ease; }
 .toast-enter-from, .toast-leave-to { opacity: 0; transform: translateY(20px); }
 
-/* Modal */
 .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 20px; }
 .modal { background: var(--mc-bg-elevated); border: 1px solid var(--mc-border); border-radius: 16px; width: 100%; max-height: 90vh; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0,0,0,0.15); }
 .modal-wide { max-width: 600px; }
@@ -488,6 +595,13 @@ function truncate(str: string, len: number) {
 .modal-close { width: 32px; height: 32px; border: none; background: none; cursor: pointer; color: var(--mc-text-tertiary); display: flex; align-items: center; justify-content: center; border-radius: 6px; }
 .modal-close:hover { background: var(--mc-bg-sunken); }
 .modal-body { flex: 1; overflow-y: auto; padding: 20px 24px; }
+.detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.detail-item { display: flex; flex-direction: column; gap: 6px; }
+.detail-item-full { grid-column: 1 / -1; }
+.detail-label { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--mc-text-tertiary); }
+.detail-value { font-size: 14px; line-height: 1.5; color: var(--mc-text-primary); word-break: break-word; }
+.detail-subvalue { font-size: 12px; color: var(--mc-text-tertiary); white-space: pre-wrap; }
+.detail-block { padding: 12px 14px; border: 1px solid var(--mc-border); border-radius: 10px; background: var(--mc-bg-sunken); white-space: pre-wrap; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .form-group { display: flex; flex-direction: column; gap: 6px; }
 .form-group.full-width { grid-column: 1 / -1; }
@@ -500,7 +614,12 @@ function truncate(str: string, len: number) {
 .toggle-inline input { width: 16px; height: 16px; accent-color: var(--mc-primary); }
 .modal-footer { display: flex; justify-content: flex-end; gap: 10px; padding: 16px 24px; border-top: 1px solid var(--mc-border-light); }
 
-/* Spin animation */
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .spin { animation: spin 1s linear infinite; }
+
+@media (max-width: 900px) {
+  .page-header { flex-direction: column; align-items: stretch; }
+  .btn-primary, .btn-secondary { width: 100%; justify-content: center; }
+  .detail-grid { grid-template-columns: 1fr; }
+}
 </style>

@@ -1,12 +1,12 @@
 <template>
   <div class="mc-page-shell security-shell">
-    <div class="mc-page-frame">
-      <div class="mc-page-inner settings-layout">
+    <div class="mc-page-frame security-frame">
+      <div class="mc-page-inner security-layout">
         <div class="settings-nav mc-surface-card">
           <div class="settings-nav__intro">
-            <div class="mc-page-kicker">Governance</div>
+            <div class="mc-page-kicker">{{ t('security.kicker') }}</div>
             <h2 class="nav-title">{{ t('security.title') }}</h2>
-            <p class="nav-desc">This is where the product becomes trustworthy: boundaries, approvals, audit, and operational truth.</p>
+            <p class="nav-desc">{{ t('security.layoutDesc') }}</p>
           </div>
           <router-link
             v-for="section in sections"
@@ -21,7 +21,9 @@
         </div>
 
         <div class="settings-content mc-surface-card">
-          <router-view />
+          <div class="settings-content__inner">
+            <router-view />
+          </div>
         </div>
       </div>
     </div>
@@ -83,24 +85,36 @@ function isActive(path: string) {
 <style scoped>
 .security-shell {
   background: transparent;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
-.settings-layout {
+.security-frame {
+  height: min(calc(100vh - 28px), 100%);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.security-layout {
   display: flex;
-  min-height: calc(100vh - 120px);
-  gap: 20px;
+  height: 100%;
+  min-height: 0;
+  gap: 18px;
 }
 
 .settings-nav {
-  width: 270px;
-  min-width: 270px;
+  width: 286px;
+  min-width: 286px;
   padding: 18px 14px;
   overflow-y: auto;
-  align-self: flex-start;
+  align-self: stretch;
 }
 
 .settings-nav__intro {
   padding: 6px 8px 16px;
+  border-bottom: 1px solid var(--mc-border-light);
+  margin-bottom: 8px;
 }
 
 .nav-title {
@@ -141,8 +155,45 @@ function isActive(path: string) {
 
 .settings-content {
   flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 22px;
+}
+
+.settings-content__inner {
+  height: 100%;
+  min-height: 0;
   overflow-y: auto;
-  padding: 24px 32px;
-  min-height: 720px;
+  overflow-x: hidden;
+  padding-right: 4px;
+}
+
+@media (max-width: 900px) {
+  .security-frame {
+    height: auto;
+    min-height: calc(100vh - 28px);
+    overflow: visible;
+  }
+
+  .security-layout {
+    flex-direction: column;
+    height: auto;
+  }
+
+  .settings-nav {
+    width: 100%;
+    min-width: 100%;
+    align-self: auto;
+  }
+
+  .settings-content {
+    overflow: visible;
+  }
+
+  .settings-content__inner {
+    overflow: visible;
+    padding-right: 0;
+  }
 }
 </style>

@@ -22,12 +22,14 @@
                 class="suggestion-card"
                 @click="$emit('suggestion-click', s)"
               >
-                <span class="suggestion-card__icon">{{ ['💬', '✍️', '💻', '📊'][i % 4] }}</span>
+                <span class="suggestion-card__icon">
+                  <el-icon v-if="i % 4 === 0"><ChatDotRound /></el-icon>
+                  <el-icon v-else-if="i % 4 === 1"><EditPen /></el-icon>
+                  <el-icon v-else-if="i % 4 === 2"><Monitor /></el-icon>
+                  <el-icon v-else><DataLine /></el-icon>
+                </span>
                 <span class="suggestion-card__text">{{ s }}</span>
-                <svg class="suggestion-card__arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <line x1="5" y1="12" x2="19" y2="12"/>
-                  <polyline points="12 5 19 12 12 19"/>
-                </svg>
+                <el-icon class="suggestion-card__arrow"><Right /></el-icon>
               </button>
             </div>
           </div>
@@ -65,6 +67,7 @@
 
 <script setup lang="ts">
 import { computed, watch, nextTick } from 'vue'
+import { ChatDotRound, DataLine, EditPen, Monitor, Right } from '@element-plus/icons-vue'
 import MessageBubble from './MessageBubble.vue'
 import { useStickToBottom } from '@/composables/chat/useStickToBottom'
 import type { Message } from '@/types'
@@ -149,8 +152,9 @@ watch(
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 28px 28px 20px;
+  padding: 18px 20px 12px;
   scroll-behavior: smooth;
+  min-height: 0;
 }
 
 .message-list::-webkit-scrollbar {
@@ -165,7 +169,7 @@ watch(
 .message-list-content {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 14px;
   min-height: 100%;
 }
 
@@ -176,12 +180,12 @@ watch(
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: 400px;
+  min-height: 320px;
 }
 
 .welcome-screen {
   text-align: center;
-  padding: 40px 20px;
+  padding: 24px 16px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -231,7 +235,7 @@ watch(
 .welcome-subtitle {
   font-size: 14px;
   color: var(--mc-text-secondary, #64748b);
-  margin: 0 0 36px;
+  margin: 0 0 24px;
   max-width: 360px;
   line-height: 1.6;
 }
@@ -341,19 +345,19 @@ watch(
 /* ===== 移动端适配 ===== */
 @media (max-width: 768px) {
   .message-list {
-    padding: 16px 12px 12px;
+    padding: 12px 10px 8px;
   }
 
   .message-list-content {
-    gap: 12px;
+    gap: 10px;
   }
 
   .empty-state {
-    min-height: 300px;
+    min-height: 240px;
   }
 
   .welcome-screen {
-    padding: 24px 12px;
+    padding: 16px 10px;
   }
 
   .welcome-logo__icon {

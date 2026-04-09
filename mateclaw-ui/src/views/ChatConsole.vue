@@ -10,12 +10,12 @@
     <!-- 会话侧边栏 -->
     <div class="conversation-panel" :class="{ 'mobile-open': convPanelOpen }">
       <div class="panel-header">
-        <h2 class="panel-title">{{ $t('chat.conversations') }}</h2>
+        <div class="panel-header-copy">
+          <div class="panel-kicker">{{ $t('nav.chat') }}</div>
+          <h2 class="panel-title">{{ $t('chat.conversations') }}</h2>
+        </div>
         <button class="new-chat-btn" @click="newConversation" :title="$t('chat.newChat')">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="12" y1="5" x2="12" y2="19"/>
-            <line x1="5" y1="12" x2="19" y2="12"/>
-          </svg>
+          <el-icon><Plus /></el-icon>
         </button>
       </div>
 
@@ -50,10 +50,7 @@
               </div>
             </div>
             <button class="conv-delete" @click.stop="deleteConversation(conv.conversationId)" :title="$t('common.delete')">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="3 6 5 6 21 6"/>
-                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
-              </svg>
+              <el-icon><Delete /></el-icon>
             </button>
           </div>
         </template>
@@ -77,11 +74,7 @@
       <Transition name="fade">
         <div v-if="isDragging" class="drop-overlay">
           <div class="drop-overlay__content">
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-              <polyline points="17 8 12 3 7 8"/>
-              <line x1="12" y1="3" x2="12" y2="15"/>
-            </svg>
+            <el-icon><UploadFilled /></el-icon>
             <span>{{ $t('chat.dropToUpload') }}</span>
           </div>
         </div>
@@ -90,14 +83,15 @@
       <div class="chat-header">
         <div class="chat-header-left">
           <button v-if="isMobile" class="conv-toggle-btn" @click="convPanelOpen = !convPanelOpen" :title="$t('chat.conversations')">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-            </svg>
+            <el-icon><ChatDotRound /></el-icon>
           </button>
-          <div class="agent-badge" v-if="currentAgent" :title="currentAgent.name">
-            <span class="agent-badge-icon">{{ currentAgent.icon || '🤖' }}</span>
-            <span class="agent-badge-name">{{ currentAgent.name }}</span>
-            <span class="agent-badge-type">{{ currentAgent.agentType === 'react' ? 'ReAct' : 'Plan-Execute' }}</span>
+          <div class="chat-stage-copy" v-if="currentAgent">
+            <div class="chat-stage-kicker">{{ $t('nav.chat') }}</div>
+            <div class="agent-badge" :title="currentAgent.name">
+              <span class="agent-badge-icon">{{ currentAgent.icon || '🤖' }}</span>
+              <span class="agent-badge-name">{{ currentAgent.name }}</span>
+              <span class="agent-badge-type">{{ currentAgent.agentType === 'react' ? 'ReAct' : 'Plan-Execute' }}</span>
+            </div>
           </div>
           <div v-else class="no-agent-hint">{{ $t('chat.selectAgent') }}</div>
         </div>
@@ -114,16 +108,10 @@
             </option>
           </select>
           <button v-else class="header-btn" @click="goToModelSettings" :title="$t('chat.configModel')">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="3"/>
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l-.06.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01A1.65 1.65 0 0 0 10.5 3.1V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-            </svg>
+            <el-icon><Setting /></el-icon>
           </button>
           <button class="header-btn" @click="clearMessages" :title="$t('chat.clearMessages')">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="3 6 5 6 21 6"/>
-              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
-            </svg>
+            <el-icon><Delete /></el-icon>
           </button>
         </div>
       </div>
@@ -210,6 +198,7 @@ import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
+import { ChatDotRound, Delete, Plus, Setting, UploadFilled } from '@element-plus/icons-vue'
 import { conversationApi, agentApi, modelApi, chatApi } from '@/api/index'
 import { channelIconUrl } from '@/utils/channelSource'
 import { useChat } from '@/composables/chat/useChat'
@@ -1137,10 +1126,15 @@ function handleCodeCopy(e: MouseEvent) {
 <style scoped>
 .chat-console-shell {
   background: transparent;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
 }
 
 .chat-console-frame {
-  height: calc(100vh - 28px);
+  height: min(calc(100vh - 28px), 100%);
+  min-height: 0;
+  overflow: hidden;
 }
 
 .chat-layout {
@@ -1151,8 +1145,8 @@ function handleCodeCopy(e: MouseEvent) {
 }
 
 .conversation-panel {
-  width: 260px;
-  min-width: 260px;
+  width: 248px;
+  min-width: 248px;
   background: linear-gradient(180deg, var(--mc-panel-top), var(--mc-panel-bottom));
   border-right: 1px solid var(--mc-border-light);
   display: flex;
@@ -1164,15 +1158,29 @@ function handleCodeCopy(e: MouseEvent) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px;
+  padding: 14px 14px 12px;
   border-bottom: 1px solid var(--mc-border-light);
 }
 
+.panel-header-copy {
+  min-width: 0;
+}
+
+.panel-kicker {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--mc-accent);
+  margin-bottom: 4px;
+}
+
 .panel-title {
-  font-size: 15px;
-  font-weight: 600;
+  font-size: 16px;
+  font-weight: 700;
   color: var(--mc-text-primary);
   margin: 0;
+  letter-spacing: -0.03em;
 }
 
 .new-chat-btn {
@@ -1196,15 +1204,15 @@ function handleCodeCopy(e: MouseEvent) {
 }
 
 .agent-selector {
-  padding: 10px 12px;
+  padding: 10px 12px 12px;
   border-bottom: 1px solid var(--mc-border-light);
 }
 
 .agent-select {
   width: 100%;
-  padding: 7px 10px;
+  padding: 9px 12px;
   border: 1px solid var(--mc-border);
-  border-radius: 6px;
+  border-radius: 12px;
   font-size: 13px;
   color: var(--mc-text-primary);
   background: var(--mc-bg-sunken);
@@ -1224,26 +1232,27 @@ function handleCodeCopy(e: MouseEvent) {
 }
 
 .conv-group-title {
-  padding: 8px 10px 4px;
-  font-size: 11px;
-  font-weight: 600;
+  padding: 10px 10px 6px;
+  font-size: 10px;
+  font-weight: 700;
   color: var(--mc-text-tertiary);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.12em;
 }
 
 .conv-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 9px 10px;
-  border-radius: 12px;
+  padding: 10px 11px;
+  border-radius: 14px;
   cursor: pointer;
   transition: all 0.15s;
 }
 
 .conv-item:hover {
   background: var(--mc-bg-sunken);
+  transform: translateY(-1px);
 }
 
 .conv-item.active {
@@ -1331,6 +1340,7 @@ function handleCodeCopy(e: MouseEvent) {
   overflow: hidden;
   background: linear-gradient(180deg, var(--mc-chat-header-bg), var(--mc-chat-bg));
   position: relative;
+  min-height: 0;
 }
 
 /* 拖拽上传遮罩 */
@@ -1373,26 +1383,51 @@ function handleCodeCopy(e: MouseEvent) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 20px;
+  padding: 10px 16px;
   background: linear-gradient(180deg, var(--mc-panel-raised), var(--mc-surface-overlay));
   border-bottom: 1px solid var(--mc-border);
   min-height: 52px;
   backdrop-filter: blur(12px);
+  gap: 10px;
+}
+
+.chat-header-left {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 10px;
 }
 
 .chat-header-right {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
+}
+
+.chat-stage-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.chat-stage-kicker {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--mc-accent);
 }
 
 .agent-badge {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 10px;
+  padding: 5px 10px;
   background: var(--mc-primary-bg);
-  border-radius: 20px;
+  border-radius: 999px;
+  max-width: 100%;
 }
 
 .agent-badge-icon {
@@ -1401,8 +1436,11 @@ function handleCodeCopy(e: MouseEvent) {
 
 .agent-badge-name {
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--mc-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .agent-badge-type {
@@ -1420,18 +1458,18 @@ function handleCodeCopy(e: MouseEvent) {
 
 .model-select {
   min-width: 260px;
-  height: 32px;
+  height: 34px;
   border: 1px solid var(--mc-border);
-  border-radius: 8px;
-  background: var(--mc-bg-elevated);
+  border-radius: 12px;
+  background: var(--mc-panel-raised);
   color: var(--mc-text-primary);
   font-size: 13px;
-  padding: 0 10px;
+  padding: 0 12px;
 }
 
 .header-btn {
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   border: 1px solid var(--mc-border);
   background: var(--mc-panel-raised);
   border-radius: 10px;
@@ -1500,7 +1538,7 @@ function handleCodeCopy(e: MouseEvent) {
 /* ===== 移动端适配 ===== */
 @media (max-width: 768px) {
   .chat-console-frame {
-    height: auto;
+    height: 100%;
     min-height: calc(100vh - 28px);
   }
 
@@ -1510,8 +1548,8 @@ function handleCodeCopy(e: MouseEvent) {
     top: 0;
     bottom: 0;
     z-index: 100;
-    width: 280px;
-    min-width: 280px;
+    width: 272px;
+    min-width: 272px;
     transform: translateX(-100%);
     transition: transform 0.25s ease;
     box-shadow: none;
@@ -1551,19 +1589,16 @@ function handleCodeCopy(e: MouseEvent) {
   }
 
   .chat-header {
-    padding: 10px 12px;
+    padding: 9px 12px;
     gap: 8px;
-  }
-
-  .chat-header-left {
-    display: flex;
-    align-items: center;
-    min-width: 0;
-    gap: 6px;
   }
 
   .agent-badge {
     padding: 4px 8px;
+  }
+
+  .chat-stage-kicker {
+    display: none;
   }
 
   .agent-badge-name,

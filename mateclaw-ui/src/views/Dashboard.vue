@@ -1,7 +1,7 @@
 <template>
   <div class="mc-page-shell dashboard-shell">
-    <div class="mc-page-frame">
-      <div class="mc-page-inner">
+    <div class="mc-page-frame dashboard-frame">
+      <div class="mc-page-inner dashboard-inner">
         <div class="mc-page-header">
           <div>
             <div class="mc-page-kicker">Operations Pulse</div>
@@ -15,96 +15,106 @@
           </div>
         </div>
 
-        <div class="stats-grid">
-          <div class="stat-card mc-surface-card">
-            <div class="stat-icon">💬</div>
-            <div class="stat-body">
-              <div class="stat-value">{{ todayStats.conversations }}</div>
-              <div class="stat-label">{{ t('dashboard.conversations') }}</div>
+        <div class="dashboard-body">
+          <div class="stats-grid">
+            <div class="stat-card mc-surface-card">
+              <div class="stat-icon">
+                <el-icon><ChatDotRound /></el-icon>
+              </div>
+              <div class="stat-body">
+                <div class="stat-value">{{ todayStats.conversations }}</div>
+                <div class="stat-label">{{ t('dashboard.conversations') }}</div>
+              </div>
+            </div>
+            <div class="stat-card mc-surface-card">
+              <div class="stat-icon">
+                <el-icon><Document /></el-icon>
+              </div>
+              <div class="stat-body">
+                <div class="stat-value">{{ todayStats.messages }}</div>
+                <div class="stat-label">{{ t('dashboard.messages') }}</div>
+              </div>
+            </div>
+            <div class="stat-card mc-surface-card">
+              <div class="stat-icon">
+                <el-icon><DataLine /></el-icon>
+              </div>
+              <div class="stat-body">
+                <div class="stat-value">{{ formatTokens(todayStats.totalTokens) }}</div>
+                <div class="stat-label">{{ t('dashboard.tokens') }}</div>
+              </div>
+            </div>
+            <div class="stat-card mc-surface-card">
+              <div class="stat-icon">
+                <el-icon><Tools /></el-icon>
+              </div>
+              <div class="stat-body">
+                <div class="stat-value">{{ todayStats.toolCalls }}</div>
+                <div class="stat-label">{{ t('dashboard.toolCalls') }}</div>
+              </div>
             </div>
           </div>
-          <div class="stat-card mc-surface-card">
-            <div class="stat-icon">📝</div>
-            <div class="stat-body">
-              <div class="stat-value">{{ todayStats.messages }}</div>
-              <div class="stat-label">{{ t('dashboard.messages') }}</div>
-            </div>
-          </div>
-          <div class="stat-card mc-surface-card">
-            <div class="stat-icon">🎯</div>
-            <div class="stat-body">
-              <div class="stat-value">{{ formatTokens(todayStats.totalTokens) }}</div>
-              <div class="stat-label">{{ t('dashboard.tokens') }}</div>
-            </div>
-          </div>
-          <div class="stat-card mc-surface-card">
-            <div class="stat-icon">🔧</div>
-            <div class="stat-body">
-              <div class="stat-value">{{ todayStats.toolCalls }}</div>
-              <div class="stat-label">{{ t('dashboard.toolCalls') }}</div>
-            </div>
-          </div>
-        </div>
 
-        <div class="comparison-section">
-          <div class="section-head">
-            <h2 class="section-title">{{ t('dashboard.periodComparison') }}</h2>
-            <p class="section-subtitle">A sharper view of how your system behaves across short, medium, and monthly horizons.</p>
-          </div>
-          <div class="comparison-grid">
-            <div class="comparison-card mc-surface-card" v-for="(period, key) in overview" :key="key">
-              <h3 class="comparison-title">{{ t('dashboard.periods.' + key) }}</h3>
-              <div class="comparison-row">
-                <span class="comparison-label">{{ t('dashboard.conversations') }}</span>
-                <span class="comparison-value">{{ period.conversations }}</span>
-              </div>
-              <div class="comparison-row">
-                <span class="comparison-label">{{ t('dashboard.messages') }}</span>
-                <span class="comparison-value">{{ period.messages }}</span>
-              </div>
-              <div class="comparison-row">
-                <span class="comparison-label">{{ t('dashboard.tokens') }}</span>
-                <span class="comparison-value">{{ formatTokens(period.totalTokens) }}</span>
-              </div>
-              <div class="comparison-row">
-                <span class="comparison-label">{{ t('dashboard.toolCalls') }}</span>
-                <span class="comparison-value">{{ period.toolCalls }}</span>
+          <div class="comparison-section">
+            <div class="section-head">
+              <h2 class="section-title">{{ t('dashboard.periodComparison') }}</h2>
+              <p class="section-subtitle">A sharper view of how your system behaves across short, medium, and monthly horizons.</p>
+            </div>
+            <div class="comparison-grid">
+              <div class="comparison-card mc-surface-card" v-for="(period, key) in overview" :key="key">
+                <h3 class="comparison-title">{{ t('dashboard.periods.' + key) }}</h3>
+                <div class="comparison-row">
+                  <span class="comparison-label">{{ t('dashboard.conversations') }}</span>
+                  <span class="comparison-value">{{ period.conversations }}</span>
+                </div>
+                <div class="comparison-row">
+                  <span class="comparison-label">{{ t('dashboard.messages') }}</span>
+                  <span class="comparison-value">{{ period.messages }}</span>
+                </div>
+                <div class="comparison-row">
+                  <span class="comparison-label">{{ t('dashboard.tokens') }}</span>
+                  <span class="comparison-value">{{ formatTokens(period.totalTokens) }}</span>
+                </div>
+                <div class="comparison-row">
+                  <span class="comparison-label">{{ t('dashboard.toolCalls') }}</span>
+                  <span class="comparison-value">{{ period.toolCalls }}</span>
+                </div>
               </div>
             </div>
           </div>
-        </div>
 
-        <div class="runs-section">
-          <div class="section-head">
-            <h2 class="section-title">{{ t('dashboard.recentRuns') }}</h2>
-            <p class="section-subtitle">Execution should feel legible. If it runs, you should see its rhythm, cost, and outcome instantly.</p>
-          </div>
-          <div class="runs-table-wrapper mc-surface-card">
-            <table v-if="recentRuns.length" class="runs-table">
-              <thead>
-                <tr>
-                  <th>{{ t('dashboard.runColumns.time') }}</th>
-                  <th>{{ t('dashboard.runColumns.job') }}</th>
-                  <th>{{ t('dashboard.runColumns.status') }}</th>
-                  <th>{{ t('dashboard.runColumns.trigger') }}</th>
-                  <th>{{ t('dashboard.runColumns.duration') }}</th>
-                  <th>{{ t('dashboard.runColumns.tokens') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="run in recentRuns" :key="run.id">
-                  <td class="cell-time">{{ formatTime(run.startedAt) }}</td>
-                  <td class="cell-job">#{{ run.cronJobId }}</td>
-                  <td>
-                    <span class="status-badge" :class="'status-' + run.status">{{ run.status }}</span>
-                  </td>
-                  <td class="cell-trigger">{{ run.triggerType }}</td>
-                  <td class="cell-duration">{{ calcDuration(run) }}</td>
-                  <td class="cell-tokens">{{ run.tokenUsage || '-' }}</td>
-                </tr>
-              </tbody>
-            </table>
-            <div v-else class="empty-state">{{ t('dashboard.noRuns') }}</div>
+          <div class="runs-section">
+            <div class="section-head">
+              <h2 class="section-title">{{ t('dashboard.recentRuns') }}</h2>
+              <p class="section-subtitle">Execution should feel legible. If it runs, you should see its rhythm, cost, and outcome instantly.</p>
+            </div>
+            <div class="runs-table-wrapper mc-surface-card">
+              <table v-if="recentRuns.length" class="runs-table">
+                <thead>
+                  <tr>
+                    <th>{{ t('dashboard.runColumns.time') }}</th>
+                    <th>{{ t('dashboard.runColumns.job') }}</th>
+                    <th>{{ t('dashboard.runColumns.status') }}</th>
+                    <th>{{ t('dashboard.runColumns.trigger') }}</th>
+                    <th>{{ t('dashboard.runColumns.duration') }}</th>
+                    <th>{{ t('dashboard.runColumns.tokens') }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="run in recentRuns" :key="run.id">
+                    <td class="cell-time">{{ formatTime(run.startedAt) }}</td>
+                    <td class="cell-job">#{{ run.cronJobId }}</td>
+                    <td>
+                      <span class="status-badge" :class="'status-' + run.status">{{ run.status }}</span>
+                    </td>
+                    <td class="cell-trigger">{{ run.triggerType }}</td>
+                    <td class="cell-duration">{{ calcDuration(run) }}</td>
+                    <td class="cell-tokens">{{ run.tokenUsage || '-' }}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <div v-else class="empty-state">{{ t('dashboard.noRuns') }}</div>
+            </div>
           </div>
         </div>
       </div>
@@ -115,6 +125,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { ChatDotRound, DataLine, Document, Tools } from '@element-plus/icons-vue'
 import { dashboardApi } from '@/api'
 
 const { t } = useI18n()
@@ -168,11 +179,34 @@ function calcDuration(run: any): string {
 <style scoped>
 .dashboard-shell {
   background: transparent;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.dashboard-frame {
+  height: min(calc(100vh - 28px), 100%);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.dashboard-inner {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.dashboard-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .hero-note {
   min-width: 220px;
-  padding: 18px 20px;
+  padding: 16px 18px;
 }
 
 .hero-note__label {
@@ -199,7 +233,7 @@ function calcDuration(run: any): string {
 }
 
 .section-head {
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .section-title {
@@ -216,10 +250,10 @@ function calcDuration(run: any): string {
   line-height: 1.6;
 }
 
-.stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; margin-bottom: 36px; }
+.stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
 .stat-card {
   display: flex; align-items: center; gap: 14px;
-  padding: 22px;
+  padding: 18px;
 }
 .stat-icon {
   width: 52px;
@@ -229,16 +263,17 @@ function calcDuration(run: any): string {
   justify-content: center;
   border-radius: 16px;
   background: linear-gradient(135deg, rgba(217, 109, 70, 0.12), rgba(24, 74, 69, 0.08));
-  font-size: 25px;
+  font-size: 24px;
+  color: var(--mc-primary);
 }
 .stat-body { display: flex; flex-direction: column; }
 .stat-value { font-size: 30px; font-weight: 800; color: var(--mc-text-primary); line-height: 1; letter-spacing: -0.05em; }
 .stat-label { font-size: 12px; color: var(--mc-text-tertiary); margin-top: 6px; text-transform: uppercase; letter-spacing: 0.08em; }
 
-.comparison-section { margin-bottom: 32px; }
-.comparison-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+.comparison-section { margin-bottom: 22px; }
+.comparison-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
 .comparison-card {
-  padding: 18px 18px 12px;
+  padding: 16px 16px 10px;
 }
 .comparison-title { font-size: 12px; font-weight: 700; color: var(--mc-accent); margin: 0 0 12px; text-transform: uppercase; letter-spacing: 0.09em; }
 .comparison-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--mc-border-light); }
@@ -247,15 +282,18 @@ function calcDuration(run: any): string {
 .comparison-value { font-size: 14px; font-weight: 700; color: var(--mc-text-primary); }
 
 /* Runs Section */
-.runs-section { margin-bottom: 32px; }
-.runs-table-wrapper { overflow: hidden; }
+.runs-section { min-height: 0; }
+.runs-table-wrapper {
+  overflow: auto;
+  max-height: 100%;
+}
 .runs-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .runs-table th {
-  padding: 10px 14px; text-align: left; font-weight: 600; font-size: 12px;
+  padding: 9px 14px; text-align: left; font-weight: 600; font-size: 12px;
   color: var(--mc-text-tertiary); text-transform: uppercase; letter-spacing: 0.03em;
   background: var(--mc-bg-muted); border-bottom: 1px solid var(--mc-border-light);
 }
-.runs-table td { padding: 10px 14px; border-bottom: 1px solid var(--mc-border-light); color: var(--mc-text-primary); }
+.runs-table td { padding: 9px 14px; border-bottom: 1px solid var(--mc-border-light); color: var(--mc-text-primary); }
 .runs-table tr:last-child td { border-bottom: none; }
 .runs-table tbody tr:hover { background: rgba(217, 109, 70, 0.04); }
 
@@ -273,6 +311,16 @@ function calcDuration(run: any): string {
 .empty-state { padding: 48px; text-align: center; color: var(--mc-text-tertiary); font-size: 14px; }
 
 @media (max-width: 768px) {
+  .dashboard-frame {
+    height: 100%;
+    min-height: calc(100vh - 28px);
+  }
+
+  .dashboard-body {
+    overflow: visible;
+    padding-right: 0;
+  }
+
   .hero-note {
     width: 100%;
     min-width: 0;
