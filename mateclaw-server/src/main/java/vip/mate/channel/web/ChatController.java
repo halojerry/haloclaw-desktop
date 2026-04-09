@@ -1248,6 +1248,9 @@ public class ChatController {
                     String phase = String.valueOf(delta.eventData().getOrDefault("phase", ""));
                     if (!phase.isBlank()) {
                         streamTracker.updatePhase(conversationId, phase);
+                        // 关键：phase 变化时关闭 running 的 content/thinking segments
+                        // 让每个阶段（reasoning → tool → summarize → final answer）的文字成为独立 segment
+                        closeRunningSegments("content", "thinking");
                     }
                 }
                 // 累积工具调用事件，用于持久化到消息历史

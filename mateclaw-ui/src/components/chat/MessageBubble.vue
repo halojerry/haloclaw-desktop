@@ -21,10 +21,10 @@
         <!-- ===== 分段式渲染模式（Claude Code 风格）===== -->
         <template v-if="useSegmentedView">
           <div class="segments-view">
-            <template v-for="seg in segments" :key="seg.id">
+            <template v-for="(seg, index) in segments" :key="seg.id">
               <ThinkingSegment v-if="seg.type === 'thinking'" :segment="seg" />
               <ToolCallSegment v-if="seg.type === 'tool_call'" :segment="seg" />
-              <ContentSegment v-if="seg.type === 'content'" :segment="seg" :show-cursor="showCursor && seg.status === 'running'" />
+              <ContentSegment v-if="seg.type === 'content'" :segment="seg" :is-last="index === segments.length - 1" :show-cursor="showCursor && seg.status === 'running'" />
             </template>
           </div>
         </template>
