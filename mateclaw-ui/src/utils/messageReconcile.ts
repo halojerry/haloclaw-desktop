@@ -38,21 +38,114 @@ export function messageRichness(msg: Message): number {
 
   // segments 是分段渲染的权威数据源，权重最高
   const segs = Array.isArray(meta.segments) ? meta.segments : []
-  score += segs.length * 10
+  score += segs.length * 120
 
   // toolCalls
   const tcs = Array.isArray(meta.toolCalls) ? meta.toolCalls : []
-  score += tcs.length * 5
+  score += tcs.length * 40
 
   // contentParts 中的 thinking / tool_call
   const parts = Array.isArray(msg.contentParts) ? msg.contentParts : []
-  if (parts.some(p => p.type === 'thinking')) score += 20
-  score += parts.filter(p => p.type === 'tool_call').length * 5
+  if (parts.some(p => p.type === 'thinking')) score += 120
+  score += parts.filter(p => p.type === 'tool_call').length * 40
 
-  // content 文本长度（capped，避免长文本主导）
-  score += Math.min((msg.content?.length || 0), 500)
+  // content 文本长度只作为弱信号，避免“最终总结更长”把 richer timeline 冲掉
+  score += Math.min((msg.content?.length || 0), 80)
 
   return score
+}
+
+function partKey(part: any): string {
+  if (!part || !part.type) return ''
+  return [
+    part.type,
+    part.text || '',
+    part.fileUrl || '',
+    part.fileName || '',
+    part.path || '',
+  ].join('::')
+}
+
+function mergeContentParts(localParts: any[], fetchedParts: any[]): any[] {
+  if (!localParts.length) return fetchedParts
+  if (!fetchedParts.length) return localParts
+
+  const merged = [...fetchedParts]
+  const seen = new Set(merged.map(partKey))
+
+  for (const part of localParts) {
+    const key = partKey(part)
+    if (!key || seen.has(key)) continue
+    merged.push(part)
+    seen.add(key)
+  }
+
+  const order: Record<string, number> = {
+    thinking: 0,
+    tool_call: 1,
+    text: 2,
+    image: 3,
+    file: 4,
+    audio: 5,
+    video: 6,
+  }
+
+  return merged.sort((a, b) => (order[a.type] ?? 99) - (order[b.type] ?? 99))
+}
+
+function mergeMetadata(localMetaRaw: any, fetchedMetaRaw: any): Record<string, any> {
+  const localMeta = safeParseMeta(localMetaRaw)
+  const fetchedMeta = safeParseMeta(fetchedMetaRaw)
+  const merged: Record<string, any> = { ...localMeta, ...fetchedMeta }
+
+  const localSegs = Array.isArray(localMeta.segments) ? localMeta.segments : []
+  const fetchedSegs = Array.isArray(fetchedMeta.segments) ? fetchedMeta.segments : []
+  if (localSegs.length > fetchedSegs.length) {
+    merged.segments = localSegs
+  } else if (fetchedSegs.length > 0) {
+    merged.segments = fetchedSegs
+  }
+
+  const localToolCalls = Array.isArray(localMeta.toolCalls) ? localMeta.toolCalls : []
+  const fetchedToolCalls = Array.isArray(fetchedMeta.toolCalls) ? fetchedMeta.toolCalls : []
+  if (localToolCalls.length > fetchedToolCalls.length) {
+    merged.toolCalls = localToolCalls
+  } else if (fetchedToolCalls.length > 0) {
+    merged.toolCalls = fetchedToolCalls
+  }
+
+  if (!merged.pendingApproval && localMeta.pendingApproval) {
+    merged.pendingApproval = localMeta.pendingApproval
+  }
+
+  return merged
+}
+
+function mergeAssistantMessages(localMsg: Message, fetchedMsg: Message): Message {
+  const localRichness = messageRichness(localMsg)
+  const fetchedRichness = messageRichness(fetchedMsg)
+  const richerMsg = localRichness >= fetchedRichness ? localMsg : fetchedMsg
+
+  return {
+    ...fetchedMsg,
+    content: (fetchedMsg.content?.length || 0) >= (localMsg.content?.length || 0)
+      ? fetchedMsg.content
+      : localMsg.content,
+    contentParts: mergeContentParts(
+      Array.isArray(localMsg.contentParts) ? localMsg.contentParts : [],
+      Array.isArray(fetchedMsg.contentParts) ? fetchedMsg.contentParts : [],
+    ),
+    metadata: mergeMetadata(localMsg.metadata, fetchedMsg.metadata),
+    attachments: fetchedMsg.attachments?.length ? fetchedMsg.attachments : localMsg.attachments,
+    errorInfo: fetchedMsg.errorInfo || localMsg.errorInfo,
+    thinkingExpanded: localMsg.thinkingExpanded ?? fetchedMsg.thinkingExpanded,
+    status: fetchedMsg.status || localMsg.status,
+    promptTokens: fetchedMsg.promptTokens ?? localMsg.promptTokens,
+    completionTokens: fetchedMsg.completionTokens ?? localMsg.completionTokens,
+    createTime: fetchedMsg.createTime || localMsg.createTime,
+    conversationId: fetchedMsg.conversationId || localMsg.conversationId,
+    role: richerMsg.role,
+  }
 }
 
 /**
@@ -85,10 +178,8 @@ export function reconcileMessages(local: Message[], fetched: Message[]): Message
       result.push(fm)
       matchedLocalIds.add(fid)
     } else {
-      // assistant 消息：比较丰富度，取更高分的
-      const lr = messageRichness(lm)
-      const fr = messageRichness(fm)
-      result.push(fr >= lr ? fm : lm)
+      // assistant 消息：不要整条覆盖，合并 fetched 的持久化字段与 local 的 richer timeline
+      result.push(mergeAssistantMessages(lm, fm))
       matchedLocalIds.add(fid)
     }
   }
