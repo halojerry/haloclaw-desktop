@@ -28,7 +28,7 @@
     </div>
 
     <!-- Content -->
-    <div v-if="!editing" class="page-content" v-html="renderedContent"></div>
+    <div v-if="!editing" class="page-content markdown-body" v-html="renderedContent"></div>
     <textarea v-else v-model="editContent" class="page-editor" rows="30"></textarea>
 
     <!-- Backlinks -->
@@ -52,44 +52,24 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useWikiStore, type WikiPage } from '@/stores/useWikiStore'
 import { wikiApi } from '@/api/index'
+import { useMarkdownRenderer } from '@/composables/useMarkdownRenderer'
 
 const { t } = useI18n()
 const store = useWikiStore()
+const { renderMarkdown } = useMarkdownRenderer()
 
 const editing = ref(false)
 const editContent = ref('')
 const backlinks = ref<WikiPage[]>([])
 
-// Simple markdown to HTML renderer with [[link]] support
 const renderedContent = computed(() => {
   if (!store.currentPage?.content) return ''
-  let html = store.currentPage.content
-    // Escape HTML
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    // Headers
-    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-    .replace(/^# (.+)$/gm, '<h1>$1</h1>')
-    // Bold and italic
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    // Wiki links
-    .replace(/\[\[([^\]]+)\]\]/g, (_match, title) => {
-      const slug = title.trim().toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff\s-]/g, '').replace(/\s+/g, '-')
-      return `<a class="wiki-link" data-slug="${slug}" onclick="return false">${title}</a>`
-    })
-    // Regular links
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>')
-    // Lists
-    .replace(/^- (.+)$/gm, '<li>$1</li>')
-    // Code
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    // Paragraphs
-    .replace(/\n\n/g, '</p><p>')
-    .replace(/\n/g, '<br>')
-  return `<p>${html}</p>`
+  // Pre-process wiki links [[title]] before markdown rendering
+  const content = store.currentPage.content.replace(/\[\[([^\]]+)\]\]/g, (_match, title) => {
+    const slug = title.trim().toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff\s-]/g, '').replace(/\s+/g, '-')
+    return `<a class="wiki-link" data-slug="${slug}" onclick="return false">${title}</a>`
+  })
+  return renderMarkdown(content)
 })
 
 watch(() => store.currentPage, async (page) => {
@@ -165,6 +145,13 @@ onMounted(() => {
 .page-content :deep(h3) { font-size: 18px; font-weight: 700; margin: 20px 0 8px; color: var(--mc-text-primary); }
 .page-content :deep(li) { margin-left: 24px; list-style: disc; }
 .page-content :deep(code) { background: var(--mc-bg-sunken); padding: 2px 6px; border-radius: 6px; font-size: 0.85em; }
+.page-content :deep(pre code) { background: none; padding: 0; }
+.page-content :deep(blockquote) { border-left: 3px solid var(--mc-primary); padding: 8px 16px; margin: 12px 0; color: var(--mc-text-secondary); background: var(--mc-bg-muted); border-radius: 0 10px 10px 0; }
+.page-content :deep(table) { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+.page-content :deep(th), .page-content :deep(td) { padding: 8px 12px; border: 1px solid var(--mc-border-light); text-align: left; }
+.page-content :deep(th) { background: var(--mc-bg-sunken); font-weight: 600; }
+.page-content :deep(hr) { border: none; border-top: 1px solid var(--mc-border-light); margin: 20px 0; }
+.page-content :deep(img) { max-width: 100%; border-radius: 10px; }
 .page-content :deep(.wiki-link) { color: var(--mc-primary); text-decoration: none; cursor: pointer; border-bottom: 1px dashed var(--mc-primary); }
 .page-content :deep(.wiki-link:hover) { text-decoration: underline; }
 
