@@ -594,19 +594,12 @@ const segments = computed<MessageSegment[]>(() => {
   if (props.message.role !== 'assistant') return []
   const meta = parsedMetadata.value
 
-  // DEBUG: 临时日志，验证后删除
-  if (meta?.segments) {
-    console.debug('[MessageBubble] segments found:', meta.segments.length, 'first:', meta.segments[0]?.type)
-  } else {
-    console.debug('[MessageBubble] NO segments in metadata, keys:', Object.keys(meta || {}))
-  }
-
   // 优先：使用 metadata.segments（流式时由前端写入，历史时由后端持久化）
-  // 这是按事件顺序记录的完整时间线，保留了 thinking→tools→content 的真实交错
   if (meta?.segments && Array.isArray(meta.segments) && meta.segments.length > 0
       && typeof meta.segments[0] === 'object' && meta.segments[0]?.type) {
-    // 补充：如果后端 segments 没有 thinking 但 contentParts 有（非原生 thinking 模型）
     const segs = [...meta.segments] as MessageSegment[]
+
+    // 补充：如果后端 segments 没有 thinking 但 contentParts 有（非原生 thinking 模型）
     const hasThinking = segs.some(s => s.type === 'thinking')
     if (!hasThinking) {
       const thinkingPart = props.message.contentParts?.find(p => p.type === 'thinking')
@@ -614,6 +607,18 @@ const segments = computed<MessageSegment[]>(() => {
         segs.unshift({ id: 'th-fb', type: 'thinking', status: 'completed', thinkingText: thinkingPart.text })
       }
     }
+
+    // 修复历史消息顺序：如果 thinking 被落在 content 后面，提到首个 content 前
+    // 只处理单个 thinking 段的常见场景，避免破坏复杂交错时间线
+    const thinkingIndices = segs
+      .map((seg, index) => seg.type === 'thinking' ? index : -1)
+      .filter(index => index >= 0)
+    const firstNonThinkingIdx = segs.findIndex((seg: MessageSegment) => seg.type !== 'thinking')
+    if (thinkingIndices.length === 1 && firstNonThinkingIdx >= 0 && thinkingIndices[0] > firstNonThinkingIdx) {
+      const [thinkingSeg] = segs.splice(thinkingIndices[0], 1)
+      segs.splice(0, 0, thinkingSeg)
+    }
+
     return segs
   }
 
