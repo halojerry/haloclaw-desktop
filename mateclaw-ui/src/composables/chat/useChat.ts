@@ -391,11 +391,6 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
   stream.on('done', (data) => {
     if (isStaleEvent(data)) return
-    console.log('[useChat] done event received:', {
-      status: data.status,
-      promptTokens: data.promptTokens,
-      completionTokens: data.completionTokens,
-    })
 
     if (currentAssistantId.value) {
       const existingMsg = getMessage(currentAssistantId.value)
@@ -662,7 +657,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     if (isStaleEvent(data)) return
     // 幂等去重：同一 pendingId 只处理一次
     if (data.pendingId && processedApprovalIds.has(data.pendingId)) {
-      console.log('[useChat] Duplicate approval request ignored:', data.pendingId)
+      // duplicate approval ignored
       return
     }
     if (data.pendingId) processedApprovalIds.add(data.pendingId)
@@ -781,7 +776,6 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     // 避免在 interrupt 请求仍在途中时误清尚未到达后端的消息
     if (data.queueLength === 0 && messageQueue.hasQueued.value
         && messageQueue.queuedMessage.value?.status === 'sending') {
-      console.log('[useChat] heartbeat queueLength=0, clearing stale local queue (had', messageQueue.queueSize.value, ')')
       messageQueue.clear()
     }
   })
@@ -794,7 +788,6 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
   stream.on('turn_interrupted', (data) => {
     if (isStaleEvent(data)) return
-    console.log('[useChat] Turn interrupted, hasQueuedMessage:', data.hasQueuedMessage)
     // 当前 turn 已中断，等待后端自动启动排队消息
     // 如果后端会自动续跑，前端不需要做额外操作
     // 如果后端没有排队消息但前端有（应该不会发生），则前端发送
@@ -804,7 +797,6 @@ export function useChat(options: UseChatOptions): UseChatReturn {
   })
 
   stream.on('queued_input_accepted', (data) => {
-    console.log('[useChat] Queued input accepted:', data.queuedMessage)
     // 后端已确认接收排队消息，标记为 sending（允许 heartbeat 兜底清理）
     messageQueue.markSending()
     streamPhase.value = 'queued'
@@ -812,7 +804,6 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
   stream.on('queued_input_started', (data) => {
     if (isStaleEvent(data)) return
-    console.log('[useChat] Queued input started:', data.message)
     // 后端已开始处理排队消息
     // 1. 先用排队的内容创建用户消息（此时上一轮回答已完成，顺序正确）
     const queued = messageQueue.dequeue()
@@ -834,7 +825,6 @@ export function useChat(options: UseChatOptions): UseChatReturn {
   // ===== 异步任务完成事件（视频生成、图片生成等） =====
   stream.on('async_task_completed', (data) => {
     if (isStaleEvent(data)) return
-    console.log('[useChat] Async task completed:', data)
     if (data.success && streamConversationId) {
       let mediaPart: MessageContentPart | null = null
       if (data.videoUrl) {
@@ -1106,7 +1096,6 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
     // 清除残留的 stop fallback timer
     if (stopFallbackTimer) { clearTimeout(stopFallbackTimer); stopFallbackTimer = null }
-    console.log('[useChat] Reconnecting to stream:', conversationId)
     streamPhase.value = 'reconnecting'
     streamConversationId = conversationId
     error.value = null

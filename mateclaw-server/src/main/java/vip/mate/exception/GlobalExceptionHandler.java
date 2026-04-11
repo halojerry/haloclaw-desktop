@@ -85,8 +85,8 @@ public class GlobalExceptionHandler {
                     request.getMethod(), request.getRequestURI(), e.getMessage());
             return null;
         }
-        log.error("Unexpected error", e);
-        return R.fail("Internal error: " + e.getMessage());
+        log.error("Unexpected error: {} {}", request.getMethod(), request.getRequestURI(), e);
+        return R.fail("Internal server error");
     }
 
     /**
