@@ -177,6 +177,19 @@ public class ToolExecutionExecutor {
 
             events.add(GraphEventPublisher.toolStart(toolName, arguments));
 
+            // 0. 子会话工具拦截：委派上下文中的子 Agent 禁止调用特定工具
+            if (vip.mate.tool.builtin.DelegationContext.currentDepth() > 0) {
+                java.util.Set<String> denied = vip.mate.tool.builtin.DelegationContext.childDeniedTools();
+                if (denied.contains(toolName)) {
+                    String msg = "[安全限制] 子 Agent 不允许使用工具: " + toolName;
+                    log.info("[ToolExecutor] Child agent blocked from using tool: {}", toolName);
+                    events.add(GraphEventPublisher.toolComplete(toolName, msg, false));
+                    allResponses.add(new org.springframework.ai.chat.messages.ToolResponseMessage.ToolResponse(
+                            toolCall.id(), toolName, msg));
+                    continue;
+                }
+            }
+
             // 1. JSON 校验
             if (arguments != null && !arguments.isBlank()) {
                 try {

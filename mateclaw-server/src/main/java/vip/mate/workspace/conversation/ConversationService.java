@@ -60,8 +60,10 @@ public class ConversationService {
      */
     public List<ConversationVO> listConversations(String username, Long workspaceId) {
         // 同时返回当前用户的会话 和 定时任务（system）产生的会话
+        // 排除子会话（委派产生的子会话不在侧边栏显示）
         LambdaQueryWrapper<ConversationEntity> wrapper = new LambdaQueryWrapper<ConversationEntity>()
                 .in(ConversationEntity::getUsername, username, SYSTEM_USER)
+                .isNull(ConversationEntity::getParentConversationId)
                 .orderByDesc(ConversationEntity::getLastActiveTime);
         if (workspaceId != null) {
             wrapper.eq(ConversationEntity::getWorkspaceId, workspaceId);
@@ -126,6 +128,20 @@ public class ConversationService {
         } else if (!conv.getUsername().equals(username)) {
             throw new IllegalArgumentException("无权操作该会话");
         }
+        return conv;
+    }
+
+    /**
+     * 创建子会话（委派场景），关联父会话 ID。
+     */
+    @Transactional
+    public ConversationEntity createChildConversation(String childConversationId, Long agentId,
+                                                        String username, Long workspaceId,
+                                                        String parentConversationId) {
+        ConversationEntity conv = getOrCreateConversation(childConversationId, agentId, username, workspaceId);
+        conv.setParentConversationId(parentConversationId);
+        conv.setTitle("子任务");
+        conversationMapper.updateById(conv);
         return conv;
     }
 

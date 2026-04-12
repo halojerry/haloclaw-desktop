@@ -45,6 +45,9 @@ public class ConversationEntity {
     /** 所属工作区 ID（默认 1 = default） */
     private Long workspaceId;
 
+    /** 父会话 ID（委派场景下，子会话记录其父会话的 conversationId） */
+    private String parentConversationId;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createTime;
 

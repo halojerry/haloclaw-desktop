@@ -39,6 +39,10 @@ export type SSEEventType =
   | 'tts_ready'
   // 浏览器执行事件
   | 'browser_action'
+  // Agent 委派事件
+  | 'delegation_start'
+  | 'delegation_progress'
+  | 'delegation_end'
 
 export interface SSEEvent {
   type: SSEEventType

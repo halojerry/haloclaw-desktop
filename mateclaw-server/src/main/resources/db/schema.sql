@@ -158,6 +158,7 @@ CREATE TABLE IF NOT EXISTS mate_conversation (
     last_active_time DATETIME,
     stream_status    VARCHAR(16)  NOT NULL DEFAULT 'idle',
     workspace_id     BIGINT       NOT NULL DEFAULT 1,
+    parent_conversation_id VARCHAR(64) DEFAULT NULL,
     create_time      DATETIME     NOT NULL,
     update_time      DATETIME     NOT NULL,
     deleted          INT          NOT NULL DEFAULT 0

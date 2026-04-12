@@ -597,6 +597,86 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     }
   })
 
+  // ===== Agent 委派事件 =====
+  stream.on('delegation_start', (data) => {
+    if (isStaleEvent(data)) return
+    streamPhase.value = 'executing_tool'
+    if (currentAssistantId.value) {
+      const segs = currentSegments.value
+      // 关闭之前的 thinking/content segment
+      const runningSeg = segs.findLast((s: MessageSegment) => s.status === 'running')
+      if (runningSeg) runningSeg.status = 'completed'
+
+      if (data.parallel && Array.isArray(data.children)) {
+        // 并行模式：为每个子任务创建一个 delegation segment
+        for (const child of data.children) {
+          segs.push({
+            id: genSegId(),
+            type: 'tool_call',
+            status: 'running',
+            toolName: `→ ${child.childAgentName || 'Agent'}`,
+            toolArgs: child.task || '',
+            timestamp: Date.now()
+          })
+        }
+      } else {
+        // 单任务模式
+        segs.push({
+          id: genSegId(),
+          type: 'tool_call',
+          status: 'running',
+          toolName: `→ ${data.childAgentName || 'Agent'}`,
+          toolArgs: data.task || '',
+          timestamp: Date.now()
+        })
+      }
+      flushSegmentsToMessage()
+    }
+  })
+
+  stream.on('delegation_progress', (data) => {
+    if (isStaleEvent(data)) return
+    if (currentAssistantId.value && data.originalEvent === 'tool_call_started') {
+      const segs = currentSegments.value
+      // 按 childAgentName 匹配对应的 delegation segment（并行时多个）
+      const childName = data.childAgentName || ''
+      const delegSeg = segs.findLast((s: MessageSegment) =>
+        s.type === 'tool_call' && s.status === 'running' && s.toolName === `→ ${childName}`)
+        || segs.findLast((s: MessageSegment) => s.type === 'tool_call' && s.status === 'running' && s.toolName?.startsWith('→'))
+      if (delegSeg) {
+        const childData = typeof data.data === 'string' ? data.data : JSON.stringify(data.data)
+        delegSeg.toolArgs = (delegSeg.toolArgs || '') + '\n  [子任务] ' + childData
+      }
+    }
+  })
+
+  stream.on('delegation_end', (data) => {
+    if (isStaleEvent(data)) return
+    if (currentAssistantId.value) {
+      const segs = currentSegments.value
+      if (data.parallel) {
+        // 并行模式：关闭所有 running 的 delegation segments
+        const totalMs = data.totalDurationMs ? Math.round(data.totalDurationMs / 1000) : 0
+        segs.filter((s: MessageSegment) => s.type === 'tool_call' && s.status === 'running' && s.toolName?.startsWith('→'))
+          .forEach((s: MessageSegment) => {
+            s.status = 'completed'
+            s.toolName = (s.toolName || '') + (data.success ? ' ✓' : ' ✗')
+          })
+      } else {
+        // 单任务模式
+        const delegSeg = segs.findLast((s: MessageSegment) => s.type === 'tool_call' && s.status === 'running' && s.toolName?.startsWith('→'))
+        if (delegSeg) {
+          delegSeg.status = 'completed'
+          delegSeg.toolName = (delegSeg.toolName || '') + (data.success ? ' ✓' : ' ✗')
+          if (data.durationMs) {
+            delegSeg.toolArgs = (delegSeg.toolArgs || '') + `\n  耗时: ${Math.round(data.durationMs / 1000)}s`
+          }
+        }
+      }
+      flushSegmentsToMessage()
+    }
+  })
+
   stream.on('plan_created', (data) => {
     if (isStaleEvent(data)) return
     if (currentAssistantId.value) {
