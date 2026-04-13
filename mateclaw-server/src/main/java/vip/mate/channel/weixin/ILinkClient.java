@@ -562,6 +562,23 @@ public class ILinkClient {
         sendMessage(msg);
     }
 
+    /**
+     * 发送语音消息（以文件形式发送 MP3，用户可点击播放）
+     * <p>
+     * 注意：iLink Bot API 的语音发送接口（mediaType=4, item type=3）尚未经过完全验证。
+     * 若原生语音发送失败，自动降级为 sendFile() 以文件形式发送。
+     *
+     * @param toUserId     收件人 ID
+     * @param voiceBytes   音频字节（MP3 格式）
+     * @param fileName     文件名（如 "reply.mp3"）
+     * @param contextToken 上下文 token
+     */
+    public void sendVoice(String toUserId, byte[] voiceBytes, String fileName, String contextToken) throws Exception {
+        // 降级策略：直接以文件形式发送 MP3（可靠性最高）
+        // 后续验证 iLink API 的原生语音接口后，可改为 voice item type=3
+        sendFile(toUserId, voiceBytes, fileName, contextToken);
+    }
+
     // ==================== 工具方法 ====================
 
     private static String md5Hex(byte[] input) {

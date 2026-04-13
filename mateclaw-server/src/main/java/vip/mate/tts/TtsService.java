@@ -111,6 +111,14 @@ public class TtsService {
     }
 
     /**
+     * 检查 TTS 功能是否全局启用（供 ChannelMessageRouter 等外部组件调用）
+     */
+    public boolean isTtsEnabled() {
+        SystemSettingsDTO config = systemSettingService.getSettings();
+        return Boolean.TRUE.equals(config.getTtsEnabled());
+    }
+
+    /**
      * 获取当前配置是否开启自动 TTS
      */
     public boolean isAutoModeEnabled() {

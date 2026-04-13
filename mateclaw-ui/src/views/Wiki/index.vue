@@ -43,24 +43,57 @@
 
         <!-- Pages List when KB selected -->
         <div v-if="store.currentKB" class="sidebar-section sidebar-section--pages">
-          <h3 class="sidebar-title">
-            {{ t('wiki.pages') }}
-            <span class="text-xs text-gray-400">({{ store.pages.length }})</span>
-          </h3>
+          <div class="sidebar-title-row">
+            <h3 class="sidebar-title">
+              {{ t('wiki.pages') }}
+              <span class="text-xs text-gray-400">({{ store.pages.length }})</span>
+            </h3>
+            <button v-if="!batchMode" class="batch-toggle" @click="batchMode = true" :title="t('wiki.batchSelect')">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+            </button>
+            <button v-else class="batch-toggle active" @click="exitBatchMode">
+              {{ t('common.cancel') }}
+            </button>
+          </div>
           <input
             v-model="pageSearch"
             type="text"
             :placeholder="t('wiki.searchPages')"
             class="sidebar-search"
           />
+
+          <!-- Batch actions bar -->
+          <div v-if="batchMode" class="batch-bar">
+            <label class="batch-check-all">
+              <input type="checkbox" :checked="allSelected" @change="toggleSelectAll" />
+              <span>{{ t('wiki.selectAll') }}</span>
+            </label>
+            <button
+              class="batch-delete-btn"
+              :disabled="selectedSlugs.length === 0"
+              @click="handleBatchDelete"
+            >
+              {{ t('common.delete') }} ({{ selectedSlugs.length }})
+            </button>
+          </div>
+
           <div class="page-list">
             <div
               v-for="page in filteredPages" :key="page.slug"
-              class="page-item" :class="{ active: store.currentPage?.slug === page.slug }"
-              @click="openPage(page.slug)"
+              class="page-item" :class="{ active: !batchMode && store.currentPage?.slug === page.slug }"
+              @click="batchMode ? toggleSelect(page.slug) : openPage(page.slug)"
             >
-              <div class="page-item-title">{{ page.title }}</div>
-              <div class="page-item-meta">v{{ page.version }} &middot; {{ page.lastUpdatedBy }}</div>
+              <input
+                v-if="batchMode"
+                type="checkbox"
+                :checked="selectedSlugs.includes(page.slug)"
+                class="page-checkbox"
+                @click.stop="toggleSelect(page.slug)"
+              />
+              <div class="page-item-body">
+                <div class="page-item-title">{{ page.title }}</div>
+                <div class="page-item-meta">v{{ page.version }} &middot; {{ page.lastUpdatedBy }}</div>
+              </div>
             </div>
           </div>
         </div>
@@ -136,6 +169,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useWikiStore } from '@/stores/useWikiStore'
+import { wikiApi } from '@/api/index'
 import RawMaterialPanel from './components/RawMaterialPanel.vue'
 import WikiPageViewer from './components/WikiPageViewer.vue'
 import WikiConfig from './components/WikiConfig.vue'
@@ -148,6 +182,46 @@ const newKBName = ref('')
 const newKBDesc = ref('')
 const activeTab = ref('raw')
 const pageSearch = ref('')
+
+// Batch selection
+const batchMode = ref(false)
+const selectedSlugs = ref<string[]>([])
+
+const allSelected = computed(() =>
+  filteredPages.value.length > 0 && selectedSlugs.value.length === filteredPages.value.length
+)
+
+function toggleSelect(slug: string) {
+  const idx = selectedSlugs.value.indexOf(slug)
+  if (idx >= 0) selectedSlugs.value.splice(idx, 1)
+  else selectedSlugs.value.push(slug)
+}
+
+function toggleSelectAll() {
+  if (allSelected.value) {
+    selectedSlugs.value = []
+  } else {
+    selectedSlugs.value = filteredPages.value.map(p => p.slug)
+  }
+}
+
+function exitBatchMode() {
+  batchMode.value = false
+  selectedSlugs.value = []
+}
+
+async function handleBatchDelete() {
+  if (selectedSlugs.value.length === 0 || !store.currentKB) return
+  const confirmed = confirm(t('wiki.confirmBatchDelete', { count: selectedSlugs.value.length }))
+  if (!confirmed) return
+  try {
+    await wikiApi.batchDeletePages(store.currentKB.id, selectedSlugs.value)
+    exitBatchMode()
+    await store.fetchPages(store.currentKB.id)
+  } catch (e: any) {
+    alert(e?.message || 'Batch delete failed')
+  }
+}
 
 const tabs = computed(() => [
   { key: 'raw', label: t('wiki.rawMaterials') },
@@ -234,6 +308,21 @@ onMounted(() => {
 .kb-item-name { font-size: 14px; font-weight: 700; color: var(--mc-text-primary); margin-bottom: 4px; }
 .kb-item-meta, .page-item-meta { font-size: 12px; color: var(--mc-text-secondary); display: flex; gap: 8px; }
 .page-item-title { font-size: 13px; color: var(--mc-text-primary); font-weight: 600; }
+.page-item-body { flex: 1; min-width: 0; }
+
+/* Batch mode */
+.sidebar-title-row { display: flex; justify-content: space-between; align-items: center; }
+.batch-toggle { padding: 4px 8px; border: 1px solid var(--mc-border); border-radius: 8px; background: var(--mc-bg-elevated); color: var(--mc-text-secondary); cursor: pointer; font-size: 11px; display: flex; align-items: center; gap: 4px; }
+.batch-toggle:hover { background: var(--mc-bg-sunken); }
+.batch-toggle.active { color: var(--mc-primary); border-color: var(--mc-primary); }
+.batch-bar { display: flex; justify-content: space-between; align-items: center; padding: 6px 8px; background: var(--mc-bg-muted); border-radius: 10px; }
+.batch-check-all { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--mc-text-secondary); cursor: pointer; }
+.batch-check-all input { cursor: pointer; }
+.batch-delete-btn { padding: 4px 12px; border: none; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; background: var(--el-color-danger-light-9, #fef0f0); color: var(--el-color-danger, #f56c6c); }
+.batch-delete-btn:hover:not(:disabled) { background: var(--el-color-danger-light-7, #fab6b6); }
+.batch-delete-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.page-checkbox { flex-shrink: 0; cursor: pointer; margin-right: 8px; }
+.page-item { display: flex; align-items: center; }
 
 .kb-status { position: absolute; right: 8px; top: 8px; font-size: 10px; padding: 2px 6px; border-radius: 9999px; text-transform: uppercase; font-weight: 500; }
 .kb-status.active { background: rgba(90, 138, 90, 0.15); color: var(--mc-success); }

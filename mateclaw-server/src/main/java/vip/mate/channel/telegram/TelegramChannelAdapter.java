@@ -394,6 +394,7 @@ public class TelegramChannelAdapter extends AbstractChannelAdapter {
         List<MessageContentPart> contentParts = new ArrayList<>();
         String textContent = (String) message.get("text");
         String caption = (String) message.get("caption");
+        boolean hasVoice = message.get("voice") != null;
 
         if (textContent != null && !textContent.isBlank()) {
             contentParts.add(MessageContentPart.text(textContent));
@@ -461,6 +462,7 @@ public class TelegramChannelAdapter extends AbstractChannelAdapter {
                 .content(textContent != null ? textContent : "")
                 .contentType(determineContentType(contentParts))
                 .contentParts(contentParts)
+                .inputMode(hasVoice ? "voice" : "text")
                 .timestamp(LocalDateTime.now())
                 .replyToken(chatId)
                 .rawPayload(update)

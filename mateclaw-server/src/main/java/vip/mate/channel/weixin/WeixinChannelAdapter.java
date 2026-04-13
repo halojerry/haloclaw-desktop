@@ -264,6 +264,7 @@ public class WeixinChannelAdapter extends AbstractChannelAdapter {
         // 解析消息内容
         List<MessageContentPart> contentParts = new ArrayList<>();
         List<String> textParts = new ArrayList<>();
+        boolean hasVoice = false;
 
         List<Map<String, Object>> itemList = (List<Map<String, Object>>) msg.getOrDefault("item_list", List.of());
         boolean mediaDownloadEnabled = getConfigBoolean("media_download_enabled", true);
@@ -312,6 +313,7 @@ public class WeixinChannelAdapter extends AbstractChannelAdapter {
                 }
                 case 3 -> {
                     // Voice — 使用 ASR 语音识别文本
+                    hasVoice = true;
                     Map<String, Object> voiceItem = (Map<String, Object>) item.getOrDefault("voice_item", Map.of());
                     Map<String, Object> voiceTextItem = (Map<String, Object>) voiceItem.getOrDefault("text_item", Map.of());
                     String asrText = getStr(voiceTextItem, "text").strip();
@@ -401,6 +403,7 @@ public class WeixinChannelAdapter extends AbstractChannelAdapter {
                 .content(textContent)
                 .contentType(contentParts.size() == 1 && "text".equals(contentParts.getFirst().getType()) ? "text" : "mixed")
                 .contentParts(contentParts)
+                .inputMode(hasVoice ? "voice" : "text")
                 .timestamp(LocalDateTime.now())
                 .replyToken(replyToken)
                 .rawPayload(msg)
@@ -511,6 +514,7 @@ public class WeixinChannelAdapter extends AbstractChannelAdapter {
                         }
                     }
                     case "image" -> sendImagePart(toUserId, contextToken, part);
+                    case "audio" -> sendAudioPart(toUserId, contextToken, part);
                     case "file" -> sendFilePart(toUserId, contextToken, part);
                     case "video" -> sendVideoPart(toUserId, contextToken, part);
                     default -> {
@@ -583,6 +587,22 @@ public class WeixinChannelAdapter extends AbstractChannelAdapter {
     }
 
     /**
+     * 发送音频部分：以文件形式发送 MP3（用户可点击播放）
+     */
+    private void sendAudioPart(String toUserId, String contextToken, MessageContentPart part) throws Exception {
+        byte[] audioBytes = resolveFileBytes(part);
+        if (audioBytes == null) {
+            sendFallbackText(contextToken + "|" + toUserId, part);
+            return;
+        }
+        String fileName = part.getFileName() != null ? part.getFileName() : "voice_reply.mp3";
+        client.sendVoice(toUserId, audioBytes, fileName, contextToken);
+        log.info("[weixin] Audio sent to {}: {} ({}KB)",
+                toUserId.substring(0, Math.min(12, toUserId.length())),
+                fileName, audioBytes.length / 1024);
+    }
+
+    /**
      * 从 MessageContentPart 解析文件字节：优先本地路径，其次 URL 下载
      */
     private byte[] resolveFileBytes(MessageContentPart part) {
@@ -617,6 +637,7 @@ public class WeixinChannelAdapter extends AbstractChannelAdapter {
     private void sendFallbackText(String targetId, MessageContentPart part) {
         switch (part.getType()) {
             case "image" -> sendMessage(targetId, "[图片]");
+            case "audio" -> sendMessage(targetId, "[语音回复]");
             case "file" -> sendMessage(targetId, "[文件: " + (part.getFileName() != null ? part.getFileName() : "file") + "]");
             case "video" -> sendMessage(targetId, "[视频]");
             default -> { if (part.getText() != null) sendMessage(targetId, part.getText()); }

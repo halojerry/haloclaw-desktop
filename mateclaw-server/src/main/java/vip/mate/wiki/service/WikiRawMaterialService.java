@@ -71,13 +71,27 @@ public class WikiRawMaterialService {
      */
     @Transactional
     public WikiRawMaterialEntity addText(Long kbId, String title, String content) {
+        String hash = computeHash(content);
+
+        // 去重：相同 hash 且已处理过的材料直接返回
+        WikiRawMaterialEntity existing = rawMapper.selectOne(
+                new LambdaQueryWrapper<WikiRawMaterialEntity>()
+                        .eq(WikiRawMaterialEntity::getKbId, kbId)
+                        .eq(WikiRawMaterialEntity::getContentHash, hash)
+                        .eq(WikiRawMaterialEntity::getProcessingStatus, "completed")
+                        .last("LIMIT 1"));
+        if (existing != null) {
+            log.info("[Wiki] Duplicate text detected (hash={}), returning existing id={}", hash, existing.getId());
+            return existing;
+        }
+
         WikiRawMaterialEntity entity = new WikiRawMaterialEntity();
         entity.setKbId(kbId);
         entity.setTitle(title);
         entity.setSourceType("text");
         entity.setOriginalContent(content);
         entity.setFileSize((long) content.getBytes(StandardCharsets.UTF_8).length);
-        entity.setContentHash(computeHash(content));
+        entity.setContentHash(hash);
         entity.setProcessingStatus("pending");
         rawMapper.insert(entity);
 
@@ -104,8 +118,30 @@ public class WikiRawMaterialService {
         entity.setSourcePath(sourcePath);
         entity.setFileSize(fileSize);
         entity.setProcessingStatus("pending");
-        rawMapper.insert(entity);
 
+        // 计算文件内容 hash（用于上传去重）
+        try {
+            byte[] bytes = java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(sourcePath));
+            entity.setContentHash(computeHash(new String(bytes, java.nio.charset.StandardCharsets.UTF_8)));
+        } catch (Exception e) {
+            log.warn("[Wiki] Could not compute file hash for dedup: {}", e.getMessage());
+        }
+
+        // 去重：相同 hash 且已处理过的材料直接返回已有记录
+        if (entity.getContentHash() != null) {
+            WikiRawMaterialEntity existing = rawMapper.selectOne(
+                    new LambdaQueryWrapper<WikiRawMaterialEntity>()
+                            .eq(WikiRawMaterialEntity::getKbId, kbId)
+                            .eq(WikiRawMaterialEntity::getContentHash, entity.getContentHash())
+                            .eq(WikiRawMaterialEntity::getProcessingStatus, "completed")
+                            .last("LIMIT 1"));
+            if (existing != null) {
+                log.info("[Wiki] Duplicate file detected (hash={}), returning existing id={}", entity.getContentHash(), existing.getId());
+                return existing;
+            }
+        }
+
+        rawMapper.insert(entity);
         kbService.incrementRawCount(kbId);
 
         if (properties.isAutoProcessOnUpload()) {

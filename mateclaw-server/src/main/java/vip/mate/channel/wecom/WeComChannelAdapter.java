@@ -770,6 +770,7 @@ public class WeComChannelAdapter extends AbstractChannelAdapter {
                         }
                     }
                     case "image" -> sendImagePart(targetId, part, ctx);
+                    case "audio" -> sendAudioPart(targetId, part, ctx);
                     case "file" -> sendFilePart(targetId, part, ctx);
                     default -> {
                         if (part.getText() != null) {
@@ -838,6 +839,36 @@ public class WeComChannelAdapter extends AbstractChannelAdapter {
     }
 
     /**
+     * 发送音频部分：读取字节 → 上传 → 发送
+     * <p>
+     * WeCom 原生语音消息要求 AMR 格式。TTS 输出为 MP3，
+     * Phase 1 以 file 类型发送（用户可点击播放），避免引入 AMR 转码依赖。
+     * 借鉴 CoPaw: 非 AMR 格式走 file 类型而非 voice 类型。
+     */
+    private void sendAudioPart(String targetId, MessageContentPart part, WeComReplyContext ctx) {
+        byte[] audioBytes = resolveFileBytes(part);
+        if (audioBytes == null) {
+            sendFallbackText(targetId, part);
+            return;
+        }
+
+        String fileName = part.getFileName() != null ? part.getFileName() : "voice_reply.mp3";
+        boolean isAmr = fileName.toLowerCase().endsWith(".amr");
+
+        // AMR 格式：以原生 voice 类型发送（语音气泡）
+        // 其他格式（MP3 等）：以 file 类型发送（文件卡片，可点击播放）
+        String uploadType = isAmr ? "voice" : "file";
+        String mediaId = uploadMedia(audioBytes, fileName, uploadType);
+        if (mediaId != null) {
+            String frameReqId = ctx != null ? ctx.frameReqId() : null;
+            sendMediaMessage(targetId, mediaId, uploadType, frameReqId);
+            log.info("[wecom] Audio sent as {}: {} ({}KB)", uploadType, fileName, audioBytes.length / 1024);
+        } else {
+            sendFallbackText(targetId, part);
+        }
+    }
+
+    /**
      * 从 MessageContentPart 解析文件字节：优先本地路径，其次 URL 下载
      */
     private byte[] resolveFileBytes(MessageContentPart part) {
@@ -885,6 +916,7 @@ public class WeComChannelAdapter extends AbstractChannelAdapter {
                 String name = part.getFileName() != null ? part.getFileName() : "file";
                 sendMessage(targetId, "[文件: " + name + "]");
             }
+            case "audio" -> sendMessage(targetId, "[语音回复]");
             default -> { if (part.getText() != null) sendMessage(targetId, part.getText()); }
         }
     }

@@ -39,6 +39,34 @@ public class WikiPageService {
     private final ConcurrentHashMap<Long, CachedSummaries> summaryCache = new ConcurrentHashMap<>();
     private static final long SUMMARY_CACHE_TTL_MS = 5 * 60_000; // 5 分钟
 
+    /** Agent 引用计数器（内存，不持久化，重启归零） */
+    private final ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicInteger> refCounter = new ConcurrentHashMap<>();
+
+    /** 记录 Agent 引用（WikiTool 调用时触发） */
+    public void trackReference(Long kbId, String slug) {
+        refCounter.computeIfAbsent(kbId + ":" + slug, k -> new java.util.concurrent.atomic.AtomicInteger(0))
+                .incrementAndGet();
+    }
+
+    /** Agent 引用记录 */
+    public record ReferenceEntry(String slug, String title, int refCount) {}
+
+    /** 获取被引用最多的页面 Top N */
+    public List<ReferenceEntry> getTopReferenced(Long kbId, int limit) {
+        String prefix = kbId + ":";
+        return refCounter.entrySet().stream()
+                .filter(e -> e.getKey().startsWith(prefix))
+                .sorted((a, b) -> Integer.compare(b.getValue().get(), a.getValue().get()))
+                .limit(limit)
+                .map(e -> {
+                    String slug = e.getKey().substring(prefix.length());
+                    WikiPageEntity page = getBySlug(kbId, slug);
+                    String title = page != null ? page.getTitle() : slug;
+                    return new ReferenceEntry(slug, title, e.getValue().get());
+                })
+                .toList();
+    }
+
     /**
      * 列出知识库的所有页面（不含 content）
      */
@@ -198,6 +226,7 @@ public class WikiPageService {
             existing.setSummary(extractFirstParagraph(content));
         }
         pageMapper.updateById(existing);
+        evictSummaryCache(kbId);
         return existing;
     }
 

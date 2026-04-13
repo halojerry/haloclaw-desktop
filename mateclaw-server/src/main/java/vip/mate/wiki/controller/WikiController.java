@@ -296,6 +296,7 @@ public class WikiController {
         return R.ok();
     }
 
+    @RequireWorkspaceRole("admin")
     @Operation(summary = "批量删除 Wiki 页面")
     @DeleteMapping("/knowledge-bases/{kbId}/pages/batch")
     public R<Integer> batchDeletePages(@PathVariable Long kbId,

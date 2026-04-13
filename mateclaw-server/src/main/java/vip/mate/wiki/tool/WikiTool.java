@@ -59,6 +59,9 @@ public class WikiTool {
             return error("Page not found: " + slug);
         }
 
+        // Agent 引用追踪
+        pageService.trackReference(kbId, slug);
+
         JSONObject result = JSONUtil.createObj()
                 .set("title", page.getTitle())
                 .set("slug", page.getSlug())
@@ -116,6 +119,11 @@ public class WikiTool {
 
         // DB 级别搜索（不加载 content CLOB 到 Java 内存）
         List<WikiPageEntity> matched = pageService.searchPages(kbId, query);
+
+        // Agent 引用追踪（搜索结果中的页面都算被引用）
+        for (WikiPageEntity p : matched) {
+            pageService.trackReference(kbId, p.getSlug());
+        }
 
         JSONArray arr = new JSONArray();
         for (WikiPageEntity page : matched) {

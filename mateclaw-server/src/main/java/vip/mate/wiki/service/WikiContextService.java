@@ -80,20 +80,28 @@ public class WikiContextService {
             return "";
         }
 
-        // 取 top-5 最相关页面，只注入摘要（不注入全文）
+        // 取 top-5 最相关页面，只注入摘要（不注入全文），受 token 预算限制
         scored.sort((a, b) -> Integer.compare(b.score, a.score));
         int topN = Math.min(5, scored.size());
+        int maxChars = properties.getMaxContextChars();
+        int totalChars = 0;
 
         StringBuilder sb = new StringBuilder();
         sb.append("<wiki-relevant>\n");
         sb.append("[Relevant wiki pages for this query. Use wiki_read_page(slug) for full content.]\n\n");
         for (int i = 0; i < topN; i++) {
             WikiPageEntity page = scored.get(i).page;
-            sb.append("- **").append(page.getTitle()).append("** (`").append(page.getSlug()).append("`)");
+            String line = "- **" + page.getTitle() + "** (`" + page.getSlug() + "`)";
             if (page.getSummary() != null && !page.getSummary().isBlank()) {
-                sb.append(" — ").append(page.getSummary());
+                line += " — " + page.getSummary();
             }
-            sb.append("\n");
+            line += "\n";
+            if (totalChars + line.length() > maxChars) {
+                sb.append("- ... (use wiki_search_pages for more)\n");
+                break;
+            }
+            sb.append(line);
+            totalChars += line.length();
         }
         sb.append("</wiki-relevant>");
         return sb.toString();

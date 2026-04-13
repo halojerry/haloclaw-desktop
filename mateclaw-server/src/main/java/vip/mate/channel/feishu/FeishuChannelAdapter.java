@@ -485,11 +485,12 @@ public class FeishuChannelAdapter extends AbstractChannelAdapter {
                 .content(textContent != null ? textContent : "")
                 .contentType(messageType)
                 .contentParts(contentParts)
+                .inputMode("audio".equals(messageType) ? "voice" : "text")
                 .timestamp(LocalDateTime.now())
                 .rawPayload(rawPayload)
                 .build();
 
-        // replyToken 保留完整 chatId（发送消息需要完整 ID）
+        // replyToken ��留完整 chatId（��送消息需要完整 ID）
         channelMessage.setReplyToken(chatId);
         onMessage(channelMessage);
     }
