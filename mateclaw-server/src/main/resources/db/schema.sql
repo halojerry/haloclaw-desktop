@@ -642,3 +642,26 @@ CREATE TABLE IF NOT EXISTS mate_audit_event (
 CREATE INDEX IF NOT EXISTS idx_audit_ws_time ON mate_audit_event(workspace_id, create_time);
 CREATE INDEX IF NOT EXISTS idx_audit_user ON mate_audit_event(user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_resource ON mate_audit_event(resource_type, resource_id);
+
+-- =============================================
+-- 插件表（Plugin SDK）
+-- =============================================
+CREATE TABLE IF NOT EXISTS mate_plugin (
+    id            BIGINT       NOT NULL PRIMARY KEY,
+    name          VARCHAR(128) NOT NULL,
+    version       VARCHAR(32)  NOT NULL,
+    plugin_type   VARCHAR(32)  NOT NULL,
+    display_name  VARCHAR(128),
+    description   TEXT,
+    author        VARCHAR(128),
+    entrypoint    VARCHAR(256) NOT NULL,
+    jar_path      VARCHAR(512),
+    config_json   TEXT          NOT NULL DEFAULT '{}',
+    enabled       BOOLEAN      NOT NULL DEFAULT TRUE,
+    status        VARCHAR(32)  NOT NULL DEFAULT 'LOADED',
+    error_message TEXT,
+    create_time   DATETIME     NOT NULL,
+    update_time   DATETIME     NOT NULL,
+    deleted       INT          NOT NULL DEFAULT 0
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uk_plugin_name ON mate_plugin(name);

@@ -108,6 +108,9 @@ mateclaw:
       search-path: /api/v1/search
       http-timeout: 15
       http-retries: 3
+  plugin:
+    enabled: true
+    user-dir: ${user.home}/.mateclaw/plugins
 
 # MateClaw Agent 配置
 mate:

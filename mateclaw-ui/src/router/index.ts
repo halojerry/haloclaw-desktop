@@ -52,6 +52,12 @@ const router = createRouter({
           component: () => import('@/views/Tools.vue'),
           meta: { title: 'Tools' },
         },
+        {
+          path: 'plugins',
+          name: 'Plugins',
+          component: () => import('@/views/Plugins.vue'),
+          meta: { title: 'Plugins' },
+        },
         // ==================== Settings (absorbs advanced pages) ====================
         {
           path: 'settings',

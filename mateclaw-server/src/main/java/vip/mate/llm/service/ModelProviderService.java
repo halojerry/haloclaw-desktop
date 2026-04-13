@@ -12,7 +12,10 @@ import vip.mate.llm.event.ModelConfigChangedEvent;
 import vip.mate.llm.model.*;
 import vip.mate.llm.repository.ModelProviderMapper;
 
+import org.springframework.ai.chat.model.ChatModel;
+
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 @Service
@@ -23,6 +26,32 @@ public class ModelProviderService {
     private final ModelConfigService modelConfigService;
     private final ApplicationEventPublisher eventPublisher;
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    /** Plugin-registered ChatModel instances: providerId -> ChatModel */
+    private final Map<String, ChatModel> pluginChatModels = new ConcurrentHashMap<>();
+
+    /**
+     * Register a ChatModel from a plugin.
+     */
+    public void registerPluginChatModel(String providerId, ChatModel chatModel) {
+        pluginChatModels.put(providerId, chatModel);
+    }
+
+    /**
+     * Unregister a plugin ChatModel.
+     */
+    public void unregisterPluginChatModel(String providerId) {
+        pluginChatModels.remove(providerId);
+    }
+
+    /**
+     * Get a plugin-registered ChatModel.
+     *
+     * @return the ChatModel, or null if not registered by a plugin
+     */
+    public ChatModel getPluginChatModel(String providerId) {
+        return pluginChatModels.get(providerId);
+    }
 
     public List<ProviderInfoDTO> listProviders() {
         List<ModelProviderEntity> providers = modelProviderMapper.selectList(new LambdaQueryWrapper<ModelProviderEntity>()

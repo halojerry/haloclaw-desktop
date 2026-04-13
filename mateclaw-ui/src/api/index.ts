@@ -433,6 +433,15 @@ export const dashboardApi = {
   recentRuns: (limit = 20) => http.get('/dashboard/cron-runs', { params: { limit } }),
 }
 
+// ==================== Plugins ====================
+export const pluginApi = {
+  list: () => http.get('/plugins'),
+  get: (name: string) => http.get(`/plugins/${name}`),
+  disable: (name: string) => http.post(`/plugins/${name}/disable`),
+  enable: (name: string) => http.post(`/plugins/${name}/enable`),
+  updateConfig: (name: string, config: Record<string, any>) => http.put(`/plugins/${name}/config`, config),
+}
+
 // ==================== Audit Events ====================
 export const auditApi = {
   listEvents: (params: {

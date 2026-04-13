@@ -21,6 +21,8 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 /**
@@ -38,6 +40,31 @@ public class ToolRegistry {
     private final ApplicationContext applicationContext;
     private final ToolMapper toolMapper;
     private final I18nService i18nService;
+
+    // ==================== Plugin Tools ====================
+
+    /** Plugin-registered tool entries with lazy availability checks */
+    private final CopyOnWriteArrayList<PluginToolEntry> pluginTools = new CopyOnWriteArrayList<>();
+
+    /** A tool entry registered by a plugin */
+    public record PluginToolEntry(ToolCallback callback, Supplier<Boolean> availabilityCheck) {}
+
+    /**
+     * Register a tool from a plugin with an availability check.
+     * The check is evaluated lazily each time the tool set is built.
+     */
+    public void registerPluginTool(ToolCallback callback, Supplier<Boolean> availabilityCheck) {
+        pluginTools.add(new PluginToolEntry(callback, availabilityCheck != null ? availabilityCheck : () -> true));
+        log.info("Plugin tool registered: {}", callback.getToolDefinition().name());
+    }
+
+    /**
+     * Unregister a plugin tool by name.
+     */
+    public void unregisterPluginTool(String toolName) {
+        pluginTools.removeIf(entry -> entry.callback().getToolDefinition().name().equals(toolName));
+        log.info("Plugin tool unregistered: {}", toolName);
+    }
 
     /**
      * 获取所有已启用的工具 Bean（Spring AI @Tool 注解方式）
@@ -118,8 +145,25 @@ public class ToolRegistry {
             }
         }
 
-        log.info("Building AgentToolSet: toolBeans={}, providers={}, totalCallbacks={}",
-                toolBeans.size(), providers.size(), localizedCallbacks.size());
+        // Plugin tool callbacks — evaluate availability checks lazily
+        int pluginToolCount = 0;
+        for (PluginToolEntry entry : pluginTools) {
+            try {
+                if (Boolean.TRUE.equals(entry.availabilityCheck().get())) {
+                    localizedCallbacks.add(entry.callback());
+                    pluginToolCount++;
+                } else {
+                    log.debug("Plugin tool excluded (availability check failed): {}",
+                            entry.callback().getToolDefinition().name());
+                }
+            } catch (Exception e) {
+                log.warn("Plugin tool availability check failed for {}: {}",
+                        entry.callback().getToolDefinition().name(), e.getMessage());
+            }
+        }
+
+        log.info("Building AgentToolSet: toolBeans={}, providers={}, pluginTools={}, totalCallbacks={}",
+                toolBeans.size(), providers.size(), pluginToolCount, localizedCallbacks.size());
         return AgentToolSet.fromCallbacks(toolBeans, localizedCallbacks);
     }
 
