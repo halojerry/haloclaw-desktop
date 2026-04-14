@@ -33,7 +33,9 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.util.StringUtils;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
+import java.time.Duration;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.publisher.Flux;
@@ -805,7 +807,8 @@ public class AgentGraphBuilder {
         Map<String, Object> kwargs = modelProviderService.readProviderGenerateKwargs(provider);
         MultiValueMap<String, String> headers = buildOpenAiHeaders(kwargs);
         String completionsPath = resolveOpenAiCompletionsPath(baseUrl, kwargs);
-        RestClient.Builder restClientBuilder = restClientBuilderProvider.getIfAvailable(RestClient::builder);
+        RestClient.Builder restClientBuilder = applyHttpTimeouts(
+                restClientBuilderProvider.getIfAvailable(RestClient::builder));
         WebClient.Builder webClientBuilder = webClientBuilderProvider.getIfAvailable(WebClient::builder);
 
         // Spring AI OpenAiApi 构造函数会先 set User-Agent 为 "spring-ai"，再 addAll 我们的 headers，
@@ -923,7 +926,8 @@ public class AgentGraphBuilder {
             throw new MateClawException("err.agent.anthropic_key_invalid", "Anthropic API Key 未配置或无效: " + provider.getProviderId());
         }
         String baseUrl = provider.getBaseUrl();
-        RestClient.Builder restClientBuilder = restClientBuilderProvider.getIfAvailable(RestClient::builder);
+        RestClient.Builder restClientBuilder = applyHttpTimeouts(
+                restClientBuilderProvider.getIfAvailable(RestClient::builder));
         WebClient.Builder webClientBuilder = webClientBuilderProvider.getIfAvailable(WebClient::builder);
 
         AnthropicApi.Builder builder = AnthropicApi.builder()
@@ -1273,6 +1277,19 @@ public class AgentGraphBuilder {
             });
         }
         return headers;
+    }
+
+    /**
+     * RFC-012 M1：给 LLM 调用走的 RestClient 显式配置超时，避免 socket 永久挂起等待。
+     * <p>
+     * connectTimeout=10s（任何 LLM 提供方都不该超过这个建立连接时间）；
+     * readTimeout=180s（覆盖 nginx 60s 网关超时 + 留足真实长响应余量；超时后由上层 retry 接管）。
+     */
+    private RestClient.Builder applyHttpTimeouts(RestClient.Builder builder) {
+        SimpleClientHttpRequestFactory rf = new SimpleClientHttpRequestFactory();
+        rf.setConnectTimeout(Duration.ofSeconds(10));
+        rf.setReadTimeout(Duration.ofSeconds(180));
+        return builder.requestFactory(rf);
     }
 
     /**

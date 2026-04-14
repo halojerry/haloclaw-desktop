@@ -59,8 +59,10 @@ spring:
           jdbc:
             initialize-schema: embedded
     # Spring AI Retry 配置：429/503/529 归为可重试（TransientAiException），启用指数退避
+    # RFC-012 M1：max-attempts 从 5 调到 2，避免与 wiki 层 callLlmWithResilientRetry 的 5×N 嵌套放大；
+    # 真正的重试主控权交给业务层（wiki / agent），Spring AI 仅负责"一次性瞬时抖动"的快速重试
     retry:
-      max-attempts: 5
+      max-attempts: 2
       on-http-codes: 429, 503, 529
       backoff:
         initial-interval: 3000

@@ -57,4 +57,28 @@ public class WikiProperties {
 
     /** 扫描时跳过大于此大小的文件（字节），默认 50MB */
     private long maxScanFileSize = 50 * 1024 * 1024;
+
+    /**
+     * Wiki LLM 重试最大尝试次数（含首次）。
+     * <p>
+     * RFC-012 M1：旧实现无最大次数，遇到 nginx 504 这种"反复瞬时"错误会永远重试。
+     * 设为 5 后单 chunk 最多走 5 轮，配合 llmMaxTotalDurationMs 共同保证有界停止。
+     */
+    private int llmMaxAttempts = 5;
+
+    /**
+     * Wiki LLM 重试总耗时上限（毫秒），从首次调用开始计时。
+     * <p>
+     * RFC-012 M1：单 chunk LLM 调用 + 重试的硬封顶，超过即放弃，让该 chunk 进入 failed 计数。
+     * 默认 4 分钟。
+     */
+    private long llmMaxTotalDurationMs = 240_000;
+
+    /**
+     * 是否启用两阶段消化（路由 → 逐页 merge）。
+     * <p>
+     * RFC-012 M2：true 时单 chunk 的 LLM 输出量大幅缩减，避免 nginx 60s 网关超时。
+     * 默认 false 保持向后兼容；M2 实现完成后切到 true。
+     */
+    private boolean useTwoPhaseDigest = false;
 }

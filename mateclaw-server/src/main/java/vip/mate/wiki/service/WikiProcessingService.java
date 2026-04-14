@@ -454,16 +454,22 @@ public class WikiProcessingService {
      * 立即终止（模型不可用）：401/403 认证失败、模型不存在、quota 用尽、非法 API key、
      * InterruptedException（优雅关停）。
      * <p>
-     * 使用指数退避（1s → 2s → 4s → ... → 封顶 60s），无最大尝试次数。
+     * 使用指数退避（1s → 2s → 4s → ... → 封顶 60s）。
+     * <p>
+     * RFC-012 M1：加入 maxAttempts 与 maxTotalDurationMs 双重上限，避免 nginx 504 这种
+     * 反复瞬时错误把单 chunk 卡到永远；buildChatModel 提到循环外，所有重试复用同一实例。
      */
     private String callLlmWithResilientRetry(Prompt prompt, String ctx) {
         long backoffMs = 1000;
         final long maxBackoffMs = 60_000;
+        final int maxAttempts = Math.max(1, properties.getLlmMaxAttempts());
+        final long maxTotalDurationMs = Math.max(1_000L, properties.getLlmMaxTotalDurationMs());
+        final long startNanos = System.nanoTime();
+        final ChatModel chatModel = buildChatModel();
         int attempt = 0;
         while (true) {
             attempt++;
             try {
-                ChatModel chatModel = buildChatModel();
                 ChatResponse response = chatModel.call(prompt);
                 if (response == null || response.getResult() == null
                         || response.getResult().getOutput() == null
@@ -484,10 +490,17 @@ public class WikiProcessingService {
                             ctx, attempt, t.getMessage());
                     throw new RuntimeException("LLM unavailable: " + t.getMessage(), t);
                 }
-                log.warn("[Wiki] LLM transient failure for {} attempt={}, retrying in {}ms: {}",
-                        ctx, attempt, backoffMs, t.getMessage());
+                long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000L;
+                if (attempt >= maxAttempts || elapsedMs >= maxTotalDurationMs) {
+                    log.error("[Wiki] LLM exhausted for {} after {} attempts in {}ms (limits: maxAttempts={}, maxTotalDurationMs={}): {}",
+                            ctx, attempt, elapsedMs, maxAttempts, maxTotalDurationMs, t.getMessage());
+                    throw new RuntimeException("LLM exhausted: " + t.getMessage(), t);
+                }
+                long sleepMs = Math.min(backoffMs, Math.max(0L, maxTotalDurationMs - elapsedMs));
+                log.warn("[Wiki] LLM transient failure for {} attempt={}/{} elapsed={}ms, retrying in {}ms: {}",
+                        ctx, attempt, maxAttempts, elapsedMs, sleepMs, t.getMessage());
                 try {
-                    Thread.sleep(backoffMs);
+                    Thread.sleep(sleepMs);
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
                     throw new RuntimeException("LLM retry interrupted for " + ctx, ie);
