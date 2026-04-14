@@ -55,6 +55,18 @@ public class WikiRawMaterialEntity {
     /** 错误信息 */
     private String errorMessage;
 
+    /**
+     * RFC-012 M2 v2 UI：当前处理阶段（null 未开始 / "route" / "phase-b" / "done"）。
+     * 供前端决定是否显示进度条以及显示"准备中"还是具体进度。
+     */
+    private String progressPhase;
+
+    /** RFC-012 M2 v2 UI：本次处理计划的总页数（route 阶段确定后写入）。 */
+    private Integer progressTotal;
+
+    /** RFC-012 M2 v2 UI：已完成的页数（每个 phase B 页成功后 +1）。 */
+    private Integer progressDone;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createTime;
 

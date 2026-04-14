@@ -1196,6 +1196,9 @@ export default {
       partial: 'PARTIAL',
       failed: 'FAILED',
     },
+    progress: {
+      preparing: 'Preparing…',
+    },
   },
   cronJobs: {
     kicker: 'Automation',

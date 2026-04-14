@@ -26,6 +26,10 @@ export interface WikiRawMaterial {
   lastProcessedAt: string | null
   errorMessage: string | null
   createTime: string
+  // RFC-012 M2 v2 UI：两阶段消化进度字段（后端在 route 后写 total，每页完成后 +1 done）
+  progressPhase: string | null
+  progressTotal: number
+  progressDone: number
 }
 
 export interface WikiPage {

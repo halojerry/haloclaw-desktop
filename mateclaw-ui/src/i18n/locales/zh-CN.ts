@@ -1206,6 +1206,9 @@ export default {
       partial: '部分完成',
       failed: '失败',
     },
+    progress: {
+      preparing: '准备中…',
+    },
   },
   cronJobs: {
     kicker: '自动执行',

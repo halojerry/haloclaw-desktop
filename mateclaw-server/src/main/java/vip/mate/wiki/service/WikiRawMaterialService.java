@@ -165,8 +165,33 @@ public class WikiRawMaterialService {
         }
         entity.setProcessingStatus("processing");
         entity.setErrorMessage(null);
+        // RFC-012 M2 v2 UI：新一轮处理开始，清掉上次遗留的进度显示
+        entity.setProgressPhase(null);
+        entity.setProgressTotal(0);
+        entity.setProgressDone(0);
         rawMapper.updateById(entity);
         return true;
+    }
+
+    /**
+     * RFC-012 M2 v2 UI：更新 wiki 两阶段消化的进度字段。
+     * <p>
+     * 在 {@code WikiProcessingService.processChunkTwoPhase} 的四个节点被调用：
+     * <ul>
+     *   <li>方法开头 → {@code phase="route"}, done=0, total=0（进度条显示 indeterminate）</li>
+     *   <li>route 返回后 → {@code phase="phase-b"}, done=0, total=N+M（切换到 determinate）</li>
+     *   <li>每页 create/merge 成功 → done +1</li>
+     *   <li>方法结束 → {@code phase="done"}（UI 会随 status 变成 completed 自动隐藏进度条）</li>
+     * </ul>
+     */
+    @Transactional
+    public void updateProgress(Long id, String phase, int done, int total) {
+        WikiRawMaterialEntity entity = rawMapper.selectById(id);
+        if (entity == null) return;
+        entity.setProgressPhase(phase);
+        entity.setProgressDone(done);
+        entity.setProgressTotal(total);
+        rawMapper.updateById(entity);
     }
 
     @Transactional

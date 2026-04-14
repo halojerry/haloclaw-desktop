@@ -56,35 +56,56 @@
         {{ t('wiki.noRawMaterials') }}
       </div>
       <div v-for="raw in store.rawMaterials" :key="raw.id" class="raw-item">
-        <div class="raw-item-info">
-          <span class="raw-item-title">{{ raw.title }}</span>
-          <span class="raw-item-type">{{ raw.sourceType }}</span>
+        <div class="raw-item-row">
+          <div class="raw-item-info">
+            <span class="raw-item-title">{{ raw.title }}</span>
+            <span class="raw-item-type">{{ raw.sourceType }}</span>
+          </div>
+          <div class="raw-item-meta">
+            <span class="status-badge" :class="raw.processingStatus">
+              {{ t(`wiki.status.${raw.processingStatus}`) }}
+            </span>
+            <span
+              v-if="raw.errorMessage && (raw.processingStatus === 'failed' || raw.processingStatus === 'partial')"
+              class="error-hint" :title="raw.errorMessage"
+            >
+              {{ raw.errorMessage }}
+            </span>
+          </div>
+          <div class="raw-item-actions">
+            <button
+              v-if="raw.processingStatus === 'failed' || raw.processingStatus === 'completed'"
+              class="btn-icon" :title="t('wiki.reprocess')"
+              @click="reprocess(raw.id)"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="23 4 23 10 17 10"/>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+              </svg>
+            </button>
+            <button class="btn-icon btn-icon-danger" :title="t('common.delete')" @click="deleteRaw(raw.id)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="3 6 5 6 21 6"/>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+              </svg>
+            </button>
+          </div>
         </div>
-        <div class="raw-item-meta">
-          <span class="status-badge" :class="raw.processingStatus">
-            {{ t(`wiki.status.${raw.processingStatus}`) }}
+        <div v-if="raw.processingStatus === 'processing'" class="raw-progress">
+          <div class="raw-progress-track">
+            <div
+              class="raw-progress-fill"
+              :class="{ indeterminate: !raw.progressTotal }"
+              :style="raw.progressTotal
+                ? { width: Math.min(100, Math.round((raw.progressDone / raw.progressTotal) * 100)) + '%' }
+                : {}"
+            ></div>
+          </div>
+          <span class="raw-progress-label">
+            {{ raw.progressTotal
+              ? `${raw.progressDone} / ${raw.progressTotal}`
+              : t('wiki.progress.preparing') }}
           </span>
-          <span v-if="raw.errorMessage" class="error-hint" :title="raw.errorMessage">
-            {{ raw.errorMessage }}
-          </span>
-        </div>
-        <div class="raw-item-actions">
-          <button
-            v-if="raw.processingStatus === 'failed' || raw.processingStatus === 'completed'"
-            class="btn-icon" :title="t('wiki.reprocess')"
-            @click="reprocess(raw.id)"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="23 4 23 10 17 10"/>
-              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-            </svg>
-          </button>
-          <button class="btn-icon btn-icon-danger" :title="t('common.delete')" @click="deleteRaw(raw.id)">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="3 6 5 6 21 6"/>
-              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-            </svg>
-          </button>
         </div>
       </div>
     </div>
@@ -122,7 +143,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useWikiStore } from '@/stores/useWikiStore'
 import { wikiApi } from '@/api/index'
@@ -130,6 +151,33 @@ import { wikiApi } from '@/api/index'
 const { t } = useI18n()
 const store = useWikiStore()
 const fileInput = ref<HTMLInputElement | null>(null)
+
+// RFC-012 M2 v2 UI：当列表中存在 processing 的材料时，每 3s 轮询一次刷新进度
+// 处理完毕（无 processing 项）自动停止；组件卸载时也会清理 timer。
+let pollTimer: number | null = null
+const hasProcessing = computed(() =>
+  store.rawMaterials.some(r => r.processingStatus === 'processing')
+)
+watch(
+  hasProcessing,
+  (active) => {
+    if (active && pollTimer == null) {
+      pollTimer = window.setInterval(() => {
+        if (store.currentKB) store.fetchRawMaterials(store.currentKB.id)
+      }, 3000)
+    } else if (!active && pollTimer != null) {
+      clearInterval(pollTimer)
+      pollTimer = null
+    }
+  },
+  { immediate: true }
+)
+onBeforeUnmount(() => {
+  if (pollTimer != null) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+})
 
 const showAddText = ref(false)
 const textTitle = ref('')
@@ -250,8 +298,9 @@ async function handleScanDir() {
 .raw-list-title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--mc-text-tertiary); margin-bottom: 4px; }
 .empty-hint { text-align: center; padding: 24px 0; font-size: 14px; color: var(--mc-text-tertiary); }
 
-.raw-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; background: linear-gradient(180deg, var(--mc-bg-elevated), var(--mc-bg-muted)); border: 1px solid var(--mc-border-light); border-radius: 14px; font-size: 13px; transition: border-color 0.15s, transform 0.15s; }
+.raw-item { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; background: linear-gradient(180deg, var(--mc-bg-elevated), var(--mc-bg-muted)); border: 1px solid var(--mc-border-light); border-radius: 14px; font-size: 13px; transition: border-color 0.15s, transform 0.15s; }
 .raw-item:hover { border-color: var(--mc-border); transform: translateY(-1px); }
+.raw-item-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 
 .raw-item-info { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
 .raw-item-title { font-weight: 500; color: var(--mc-text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -259,6 +308,23 @@ async function handleScanDir() {
 .raw-item-meta { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .raw-item-actions { display: flex; gap: 4px; flex-shrink: 0; }
 .error-hint { font-size: 11px; color: var(--mc-danger); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Two-phase digest progress bar (RFC-012 M2 v2 UI) */
+.raw-progress { display: flex; align-items: center; gap: 10px; padding-top: 2px; }
+.raw-progress-track { flex: 1; height: 4px; background: var(--mc-bg-sunken); border-radius: 9999px; overflow: hidden; position: relative; }
+.raw-progress-fill { height: 100%; background: var(--mc-primary); border-radius: 9999px; transition: width 0.3s ease; }
+.raw-progress-fill.indeterminate {
+  width: 30%;
+  position: absolute;
+  left: 0;
+  animation: raw-progress-slide 1.6s ease-in-out infinite;
+}
+@keyframes raw-progress-slide {
+  0%   { transform: translateX(-100%); }
+  50%  { transform: translateX(170%); }
+  100% { transform: translateX(330%); }
+}
+.raw-progress-label { font-size: 11px; color: var(--mc-text-tertiary); font-variant-numeric: tabular-nums; flex-shrink: 0; min-width: 56px; text-align: right; }
 
 /* Icon button */
 .btn-icon { width: 30px; height: 30px; border: 1px solid var(--mc-border-light); background: var(--mc-bg-elevated); cursor: pointer; border-radius: 8px; color: var(--mc-text-secondary); transition: all 0.15s; display: flex; align-items: center; justify-content: center; }

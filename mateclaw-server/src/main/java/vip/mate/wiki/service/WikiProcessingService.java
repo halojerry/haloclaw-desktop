@@ -22,9 +22,11 @@ import vip.mate.wiki.model.WikiRawMaterialEntity;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -49,6 +51,20 @@ public class WikiProcessingService {
 
     /** 并行 chunk / 材料处理执行器（JDK 21 虚拟线程）；Listener 跨包需要引用，故 public */
     public static final ExecutorService WIKI_EXECUTOR = Executors.newVirtualThreadPerTaskExecutor();
+
+    /**
+     * RFC-012 M2 v2 UI v2：单 raw 的进度计数器，多个并行 chunk 的 {@code processChunkTwoPhase}
+     * 共享同一份 atomic 计数，避免 6 个 chunk 各写各的 progress 字段时互相覆盖（导致 UI 永远 preparing）。
+     * <p>
+     * 生命周期：{@code processRawMaterial} 入口 put，try/finally 出口 remove。
+     */
+    private static final class ProgressCounter {
+        final AtomicInteger total = new AtomicInteger(0);
+        final AtomicInteger done = new AtomicInteger(0);
+        final AtomicBoolean phaseBStarted = new AtomicBoolean(false);
+    }
+
+    private final ConcurrentHashMap<Long, ProgressCounter> progressCounters = new ConcurrentHashMap<>();
 
     /**
      * 处理单个原始材料
@@ -92,6 +108,10 @@ public class WikiProcessingService {
         }
 
         kbService.updateStatus(kb.getId(), "processing");
+
+        // RFC-012 M2 v2 UI v2：为本次 raw 处理创建共享进度计数器（多 chunk 共享，避免 race）
+        progressCounters.put(rawId, new ProgressCounter());
+        rawService.updateProgress(rawId, "route", 0, 0); // UI 立即看到 indeterminate 滑条
 
         try {
             // Phase 1: 获取文本内容
@@ -152,6 +172,12 @@ public class WikiProcessingService {
             log.error("[Wiki] Processing failed for raw={}: {}", rawId, e.getMessage(), e);
             rawService.updateProcessingStatus(rawId, "failed", e.getMessage());
             kbService.updateStatus(kb.getId(), "active");
+        } finally {
+            // RFC-012 M2 v2 UI v2：写入最终进度并清理共享计数器
+            ProgressCounter pc = progressCounters.remove(rawId);
+            if (pc != null) {
+                rawService.updateProgress(rawId, "done", pc.done.get(), pc.total.get());
+            }
         }
     }
 
@@ -371,6 +397,10 @@ public class WikiProcessingService {
         String configContent = kb.getConfigContent() != null ? kb.getConfigContent() : "";
         String rawTitle = raw.getTitle();
 
+        // RFC-012 M2 v2 UI v2：取共享进度计数器（processRawMaterial 入口已 put）。
+        // 多 chunk 并行时所有 chunk 共享同一份 atomic 计数，避免互相覆盖把 UI 拉回 preparing。
+        ProgressCounter pc = progressCounters.get(rawId);
+
         // ─── 阶段 A：路由 ───
         String routeSystem = PromptLoader.loadPrompt("wiki/route-system");
         String routeUserTemplate = PromptLoader.loadPrompt("wiki/route-user");
@@ -414,8 +444,18 @@ public class WikiProcessingService {
                 if (!slug.isBlank()) updateSlugs.add(slug);
             }
         }
+        int totalPlanned = createMetas.size() + updateSlugs.size();
         log.info("[Wiki] Route phase: kbId={}, rawId={}, planned create={}, planned update={}",
                 kbId, rawId, createMetas.size(), updateSlugs.size());
+
+        // RFC-012 M2 v2 UI v2：把本 chunk 的计划数累加到共享 total；切换到 phase-b（仅首次切换需 log）
+        if (pc != null) {
+            pc.total.addAndGet(totalPlanned);
+            if (pc.phaseBStarted.compareAndSet(false, true)) {
+                log.info("[Wiki] Progress: switching to phase-b for raw={}", rawId);
+            }
+            rawService.updateProgress(rawId, "phase-b", pc.done.get(), pc.total.get());
+        }
 
         // ─── 阶段 B-1：逐页 create（每页一次单独 LLM call，输入/输出都是单页规模） ───
         for (JsonNode meta : createMetas) {
@@ -426,6 +466,11 @@ public class WikiProcessingService {
             } catch (RuntimeException e) {
                 log.warn("[Wiki] Phase B create page slug='{}' failed: {}",
                         meta.path("slug").asText(""), e.getMessage());
+            }
+            // 无论成功失败都推进 done 计数，避免失败页卡死 UI 进度
+            if (pc != null) {
+                int d = pc.done.incrementAndGet();
+                rawService.updateProgress(rawId, "phase-b", d, pc.total.get());
             }
         }
 
@@ -438,7 +483,12 @@ public class WikiProcessingService {
             } catch (RuntimeException e) {
                 log.warn("[Wiki] Phase B merge page slug='{}' failed: {}", slug, e.getMessage());
             }
+            if (pc != null) {
+                int d = pc.done.incrementAndGet();
+                rawService.updateProgress(rawId, "phase-b", d, pc.total.get());
+            }
         }
+        // 单 chunk 完成时不写"done"——多 chunk 还在跑；最终"done"由 processRawMaterial 的 finally 写入
 
         log.info("[Wiki] Two-phase digest applied: kbId={}, rawId={}, created={}, updated={}",
                 kbId, rawId, created, updated);
