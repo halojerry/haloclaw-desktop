@@ -694,20 +694,22 @@ public class WikiProcessingService {
                 if (Thread.currentThread().isInterrupted()) {
                     throw new RuntimeException("LLM call interrupted for " + ctx, t);
                 }
+                String rootInfo = summarizeRoot(t);
                 if (isFatalModelError(t)) {
-                    log.error("[Wiki] LLM unavailable (fatal) for {} after {} attempts: {}",
-                            ctx, attempt, t.getMessage());
-                    throw new RuntimeException("LLM unavailable: " + t.getMessage(), t);
+                    log.error("[Wiki] LLM unavailable (fatal) for {} after {} attempts (rootCause={}): {}",
+                            ctx, attempt, rootInfo, t.getMessage());
+                    throw new RuntimeException("LLM unavailable (rootCause=" + rootInfo + "): " + t.getMessage(), t);
                 }
                 long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000L;
                 if (attempt >= maxAttempts || elapsedMs >= maxTotalDurationMs) {
-                    log.error("[Wiki] LLM exhausted for {} after {} attempts in {}ms (limits: maxAttempts={}, maxTotalDurationMs={}): {}",
-                            ctx, attempt, elapsedMs, maxAttempts, maxTotalDurationMs, t.getMessage());
-                    throw new RuntimeException("LLM exhausted: " + t.getMessage(), t);
+                    log.error("[Wiki] LLM exhausted for {} after {} attempts in {}ms (limits: maxAttempts={}, maxTotalDurationMs={}, rootCause={}): {}",
+                            ctx, attempt, elapsedMs, maxAttempts, maxTotalDurationMs, rootInfo, t.getMessage());
+                    throw new RuntimeException("LLM exhausted after " + attempt + " attempts in " + elapsedMs
+                            + "ms (rootCause=" + rootInfo + "): " + t.getMessage(), t);
                 }
                 long sleepMs = Math.min(backoffMs, Math.max(0L, maxTotalDurationMs - elapsedMs));
-                log.warn("[Wiki] LLM transient failure for {} attempt={}/{} elapsed={}ms, retrying in {}ms: {}",
-                        ctx, attempt, maxAttempts, elapsedMs, sleepMs, t.getMessage());
+                log.warn("[Wiki] LLM transient failure for {} attempt={}/{} elapsed={}ms, retrying in {}ms (rootCause={}): {}",
+                        ctx, attempt, maxAttempts, elapsedMs, sleepMs, rootInfo, t.getMessage());
                 try {
                     Thread.sleep(sleepMs);
                 } catch (InterruptedException ie) {
@@ -737,6 +739,19 @@ public class WikiProcessingService {
         Throwable cur = t;
         int depth = 0;
         while (cur != null && depth < 8) {
+            // 按异常类型直接判 fatal —— DNS / 连接拒绝 / TLS 问题重试都是浪费
+            String className = cur.getClass().getSimpleName();
+            if ("UnknownHostException".equals(className)
+                    || "SSLHandshakeException".equals(className)
+                    || "CertificateException".equals(className)
+                    || "SSLPeerUnverifiedException".equals(className)) {
+                return true;
+            }
+            if ("ConnectException".equals(className) && cur.getMessage() != null
+                    && cur.getMessage().toLowerCase().contains("refused")) {
+                return true;
+            }
+
             String msg = cur.getMessage();
             if (msg != null) {
                 String m = msg.toLowerCase();
@@ -768,11 +783,46 @@ public class WikiProcessingService {
                         || (m.contains("safety") && m.contains("block"))) {
                     return true;
                 }
+                // 基础设施类永久错误：关键字兜底（和类名判断互补，跨语言 SDK 也能抓到）
+                if (m.contains("unknown host") || m.contains("no such host")
+                        || m.contains("connection refused")
+                        || m.contains("pkix path building failed")
+                        || m.contains("certificate verify failed")
+                        || m.contains("certificate_unknown")
+                        || m.contains("ssl handshake")) {
+                    return true;
+                }
             }
             cur = cur.getCause();
             depth++;
         }
         return false;
+    }
+
+    /**
+     * 沿 getCause() 遍历到最深，返回根因异常的 "SimpleName: message" 形式。
+     * <p>
+     * Spring RestClient 会把 HTTP 层异常包装成 ResourceAccessException，外层消息统一是
+     * "I/O error on POST request for ...: <rootMsg>"，根因的异常类型（HttpTimeoutException
+     * / UnknownHostException / SSLHandshakeException / ConnectException）在最外层是看不到的。
+     * UI 截断的时候又会把宝贵的根因关键字（"rootCause=..."）切掉，运维排错几乎盲猜。
+     * <p>
+     * 拼进最终抛出的 RuntimeException 消息里，UI 就算截断也能在前几十字看见类名。
+     */
+    private String summarizeRoot(Throwable t) {
+        Throwable cur = t;
+        int depth = 0;
+        while (cur != null && cur.getCause() != null && cur.getCause() != cur && depth < 8) {
+            cur = cur.getCause();
+            depth++;
+        }
+        String cls = cur != null ? cur.getClass().getSimpleName() : "Unknown";
+        String msg = cur != null ? cur.getMessage() : null;
+        if (msg == null) return cls;
+        // 截短 message 避免把整段 HTML 错误页塞进异常链
+        String trimmed = msg.replaceAll("\\s+", " ").trim();
+        if (trimmed.length() > 200) trimmed = trimmed.substring(0, 200) + "...";
+        return cls + ": " + trimmed;
     }
 
     /** 瞬时错误的内部标记异常，确保空响应也能走重试路径 */
