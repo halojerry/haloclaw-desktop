@@ -1,0 +1,176 @@
+name: Build MateClaw Portable
+
+on:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-frontend:
+    name: Build Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: mateclaw-ui/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: ./mateclaw-ui
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: ./mateclaw-ui
+        run: npm run build
+
+      - name: Upload frontend artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: mateclaw-server/src/main/resources/static
+
+  build-portable:
+    name: Build Portable Package
+    runs-on: ubuntu-latest
+    needs: build-frontend
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download frontend artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: mateclaw-server/src/main/resources/static
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Build backend JAR
+        working-directory: ./mateclaw-server
+        run: mvn clean package -DskipTests
+
+      - name: Download JRE 21 (Linux)
+        run: |
+          mkdir -p portable/jre
+          wget -q https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.3%2B9/OpenJDK21U-jre_x64_linux_hotspot_21.0.3_9.tar.gz -O jre.tar.gz
+          tar -xzf jre.tar.gz -C portable/jre --strip-components=1
+          rm jre.tar.gz
+
+      - name: Download JRE 21 (Windows)
+        run: |
+          wget -q https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.3%2B9/OpenJDK21U-jre_x64_windows_hotspot_21.0.3_9.zip -O jre-win.zip
+          unzip -q jre-win.zip -d portable/
+          mv portable/jdk-21.0.3+9-jre portable/jre-win
+          rm jre-win.zip
+
+      - name: Prepare portable package
+        run: |
+          VERSION=$(date +%Y%m%d%H%M)
+          mkdir -p portable/config
+          cp mateclaw-server/target/mateclaw-server-*.jar portable/mateclaw.jar
+          echo "{\"version\": \"$VERSION\", \"buildTime\": \"$(date -Iseconds)\"}" > portable/version.json
+          
+          # Windows启动脚本
+          cat > portable/start.bat << 'EOF'
+@echo off
+cd /d "%~dp0"
+echo MateClaw Portable - Starting...
+powershell -Command "& {./update.ps1}"
+start "" "jre/bin/javaw" -jar mateclaw.jar
+timeout /t 3 /nobreak > nul
+start http://localhost:8080
+EOF
+          
+          # Linux/Mac启动脚本
+          cat > portable/start.sh << 'EOF'
+#!/bin/bash
+cd "$(dirname "$0")"
+./update.sh
+./jre/bin/java -jar mateclaw.jar &
+sleep 3
+xdg-open http://localhost:8080 2>/dev/null || open http://localhost:8080 2>/dev/null
+EOF
+          chmod +x portable/start.sh
+          
+          # Windows更新脚本
+          cat > portable/update.ps1 << 'EOF'
+$updateUrl = "https://api.github.com/repos/halojerry/mateclaw-releases/releases/latest"
+try {
+    $release = Invoke-RestMethod -Uri $updateUrl -Headers @{User-Agent="MateClaw"}
+    $current = (Get-Content version.json | ConvertFrom-Json).version
+    if ($release.tag_name -ne "v$current") {
+        Write-Host "New version available: $($release.tag_name)"
+        $asset = $release.assets | Where-Object { $_.name -like "*-portable.zip" } | Select-Object -First 1
+        if ($asset) {
+            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile update.zip
+            Expand-Archive update.zip -DestinationPath update_temp -Force
+            Remove-Item update.zip
+            Write-Host "Update downloaded. Restart to apply."
+        }
+    }
+} catch {}
+EOF
+          
+          # Linux更新脚本
+          cat > portable/update.sh << 'EOF'
+#!/bin/bash
+url="https://api.github.com/repos/halojerry/mateclaw-releases/releases/latest"
+current=$(grep version version.json | cut -d'"' -f4)
+latest=$(curl -s "$url" | grep tag_name | cut -d'"' -f4)
+if [ "v$current" != "$latest" ]; then
+    echo "New version: $latest"
+    dl=$(curl -s "$url" | grep browser_download_url | grep portable.zip | head -1 | cut -d'"' -f4)
+    curl -L -o update.zip "$dl" && unzip -o update.zip -d update_temp && rm update.zip
+fi
+EOF
+          chmod +x portable/update.sh
+          
+          zip -r MateClaw-Portable-$VERSION-linux.zip portable
+          rm -rf portable/jre && mv portable/jre-win portable/jre
+          zip -r MateClaw-Portable-$VERSION-windows.zip portable
+
+      - name: Upload portable packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: portable-packages
+          path: MateClaw-Portable-*.zip
+
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: build-portable
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: portable-packages
+          path: packages
+      - id: ver
+        run: echo "V=$(date +%Y.%m.%d.%H%M)" >> $GITHUB_OUTPUT
+      - uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.ver.outputs.V }}
+          name: MateClaw Portable v${{ steps.ver.outputs.V }}
+          files: packages/MateClaw-Portable-*.zip
+          body: |
+            ## MateClaw Portable
+            - Windows: `*-windows.zip`
+            - Mac/Linux: `*-linux.zip`
+            ### Usage
+            1. Extract
+            2. Run `start.bat` (Windows) or `./start.sh` (Mac/Linux)
+            3. Browser opens http://localhost:8080
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
