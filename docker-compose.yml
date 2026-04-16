@@ -1,0 +1,74 @@
+version: '3.8'
+
+services:
+  # MySQL 数据库
+  mysql:
+    image: mysql:8.0
+    container_name: mateclaw-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: mateclaw123
+      MYSQL_DATABASE: mateclaw
+      MYSQL_USER: mateclaw
+      MYSQL_PASSWORD: mateclaw123
+      TZ: Asia/Shanghai
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./mateclaw-server/src/main/resources/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - ./mateclaw-server/src/main/resources/db/data.sql:/docker-entrypoint-initdb.d/02-data.sql
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # SearXNG 搜索引擎（keyless 搜索 provider，零配置可用）
+  searxng:
+    image: searxng/searxng:latest
+    container_name: mateclaw-searxng
+    restart: unless-stopped
+    environment:
+      - SEARXNG_BASE_URL=http://searxng:8080
+    volumes:
+      - searxng_data:/etc/searxng
+    ports:
+      - "8088:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # MateClaw 后端服务
+  mateclaw-server:
+    build:
+      context: ./mateclaw-server
+      dockerfile: Dockerfile
+    container_name: mateclaw-server
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      searxng:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: mysql
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: mateclaw
+      DB_USERNAME: mateclaw
+      DB_PASSWORD: mateclaw123
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY}
+      SERPER_API_KEY: ${SERPER_API_KEY:-}
+    ports:
+      - "18080:18080"
+    volumes:
+      - server_data:/app/data
+
+volumes:
+  mysql_data:
+  server_data:
+  searxng_data:

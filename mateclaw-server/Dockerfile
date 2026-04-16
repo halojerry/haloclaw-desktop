@@ -1,0 +1,13 @@
+# 多阶段构建
+FROM maven:3.9-eclipse-temurin-21 AS builder
+WORKDIR /build
+COPY pom.xml .
+RUN mvn dependency:go-offline -q
+COPY src ./src
+RUN mvn package -DskipTests -q
+
+FROM eclipse-temurin:21-jre-alpine
+WORKDIR /app
+COPY --from=builder /build/target/*.jar app.jar
+EXPOSE 18088
+ENTRYPOINT ["java", "-jar", "-Dspring.profiles.active=mysql", "app.jar"]

@@ -1,0 +1,11 @@
+# Skills 技能模块配置
+mateclaw:
+  skill:
+    enabled: true
+    timeout: 60000
+    retry-count: 3
+    max-history-size: 1000
+    workspace:
+      root: ${user.home}/.ozon-claw/skills
+      auto-init: true
+      delete-policy: archive

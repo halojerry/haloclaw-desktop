@@ -1,0 +1,229 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxGraphModel dx="1100" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1000" pageHeight="1400" math="0" shadow="0">
+  <root>
+    <mxCell id="0" />
+    <mxCell id="1" parent="0" />
+
+    
+    <mxCell id="start" value="应用启动" style="rounded=1;whiteSpace=wrap;html=1;arcSize=50;fillColor=#f5f5f5;strokeColor=#666666;fontStyle=1;fontSize=14;" parent="1" vertex="1">
+      <mxGeometry x="400" y="40" width="120" height="40" as="geometry" />
+    </mxCell>
+
+    
+    <mxCell id="load_device" value="加载/生成设备ID" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" parent="1" vertex="1">
+      <mxGeometry x="380" y="120" width="160" height="50" as="geometry" />
+    </mxCell>
+
+    
+    <mxCell id="check_registered" value="设备已注册?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" parent="1" vertex="1">
+      <mxGeometry x="390" y="220" width="140" height="70" as="geometry" />
+    </mxCell>
+
+    
+    <mxCell id="call_register" value="调用 /device/register" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" parent="1" vertex="1">
+      <mxGeometry x="380" y="340" width="160" height="50" as="geometry" />
+    </mxCell>
+
+    
+    <mxCell id="check_login" value="用户已登录?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" parent="1" vertex="1">
+      <mxGeometry x="390" y="440" width="140" height="70" as="geometry" />
+    </mxCell>
+
+    
+    <mxCell id="call_auth" value="调用 /device/authenticate" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" parent="1" vertex="1">
+      <mxGeometry x="380" y="560" width="160" height="50" as="geometry" />
+    </mxCell>
+
+    
+    <mxCell id="check_limit" value="设备数量超限?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" parent="1" vertex="1">
+      <mxGeometry x="390" y="660" width="140" height="70" as="geometry" />
+    </mxCell>
+
+    
+    <mxCell id="register_success" value="注册/认证成功" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" parent="1" vertex="1">
+      <mxGeometry x="380" y="780" width="160" height="50" as="geometry" />
+    </mxCell>
+
+    
+    <mxCell id="start_heartbeat" value="启动心跳定时器&amp;#xa;(每5分钟)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" parent="1" vertex="1">
+      <mxGeometry x="380" y="870" width="160" height="50" as="geometry" />
+    </mxCell>
+
+    
+    <mxCell id="app_ready" value="应用就绪" style="rounded=1;whiteSpace=wrap;html=1;arcSize=50;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1;" parent="1" vertex="1">
+      <mxGeometry x="400" y="960" width="120" height="40" as="geometry" />
+    </mxCell>
+
+    
+    <mxCell id="reject" value="拒绝访问" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=12;" parent="1" vertex="1">
+      <mxGeometry x="600" y="330" width="120" height="50" as="geometry" />
+    </mxCell>
+
+    
+    <mxCell id="need_login" value="请先登录" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;" parent="1" vertex="1">
+      <mxGeometry x="40" y="450" width="120" height="50" as="geometry" />
+    </mxCell>
+
+    
+    <mxCell id="unbind_hint" value="请解绑其他设备" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=12;" parent="1" vertex="1">
+      <mxGeometry x="600" y="670" width="140" height="50" as="geometry" />
+    </mxCell>
+
+    
+    <mxCell id="end_fail" value="启动失败" style="rounded=1;whiteSpace=wrap;html=1;arcSize=50;fillColor=#f8cecc;strokeColor=#b85450;fontSize=14;fontStyle=1;" parent="1" vertex="1">
+      <mxGeometry x="400" y="1050" width="120" height="40" as="geometry" />
+    </mxCell>
+
+    
+    
+    <mxCell id="heartbeat_check" value="心跳触发" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" parent="1" vertex="1">
+      <mxGeometry x="180" y="870" width="120" height="60" as="geometry" />
+    </mxCell>
+
+    
+    <mxCell id="send_heartbeat" value="发送心跳" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" parent="1" vertex="1">
+      <mxGeometry x="40" y="970" width="100" height="40" as="geometry" />
+    </mxCell>
+
+    
+    <mxCell id="update_active" value="更新活跃时间" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" parent="1" vertex="1">
+      <mxGeometry x="180" y="970" width="120" height="40" as="geometry" />
+    </mxCell>
+
+    
+    <mxCell id="heartbeat_wait" value="等待下次心跳" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=11;dashed=1;" parent="1" vertex="1">
+      <mxGeometry x="340" y="970" width="120" height="40" as="geometry" />
+    </mxCell>
+
+    
+    
+    <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;" parent="1" source="start" target="load_device" edge="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    
+    <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;" parent="1" source="load_device" target="check_registered" edge="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    
+    <mxCell id="e3" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=0;" parent="1" source="check_registered" target="call_register" edge="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    
+    <mxCell id="e4" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;" parent="1" source="check_registered" target="check_login" edge="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    
+    <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;" parent="1" source="call_register" target="check_login" edge="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    
+    <mxCell id="e6" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=0;" parent="1" source="check_login" target="need_login" edge="1">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="300" y="475" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+
+    
+    <mxCell id="e7" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;" parent="1" source="check_login" target="call_auth" edge="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    
+    <mxCell id="e8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;" parent="1" source="call_auth" target="check_limit" edge="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    
+    <mxCell id="e9" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;" parent="1" source="check_limit" target="unbind_hint" edge="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    
+    <mxCell id="e10" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=0;" parent="1" source="check_limit" target="register_success" edge="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    
+    <mxCell id="e11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;" parent="1" source="register_success" target="start_heartbeat" edge="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    
+    <mxCell id="e12" style="edgeStyle=orthogonalEdgeStyle;rounded=0;" parent="1" source="start_heartbeat" target="app_ready" edge="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    
+    <mxCell id="e13" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;" parent="1" source="app_ready" target="heartbeat_check" edge="1">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="240" y="980" />
+          <mxPoint x="240" y="900" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+
+    
+    <mxCell id="e14" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;" parent="1" source="heartbeat_check" target="send_heartbeat" edge="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    
+    <mxCell id="e15" style="edgeStyle=orthogonalEdgeStyle;rounded=0;" parent="1" source="send_heartbeat" target="update_active" edge="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    
+    <mxCell id="e16" style="edgeStyle=orthogonalEdgeStyle;rounded=0;" parent="1" source="update_active" target="heartbeat_wait" edge="1">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    
+    <mxCell id="e17" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;dashed=1;" parent="1" source="heartbeat_wait" target="heartbeat_check" edge="1">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="400" y="990" />
+          <mxPoint x="400" y="900" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+
+    
+    <mxCell id="e18" style="edgeStyle=orthogonalEdgeStyle;rounded=0;" parent="1" source="unbind_hint" target="end_fail" edge="1">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="670" y="870" />
+          <mxPoint x="670" y="1070" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+
+    
+    <mxCell id="e19" style="edgeStyle=orthogonalEdgeStyle;rounded=0;" parent="1" source="need_login" target="end_fail" edge="1">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="100" y="800" />
+          <mxPoint x="460" y="800" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+
+    
+    <mxCell id="e20" style="edgeStyle=orthogonalEdgeStyle;rounded=0;" parent="1" source="reject" target="end_fail" edge="1">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="660" y="900" />
+          <mxPoint x="460" y="900" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+
+  </root>
+</mxGraphModel>

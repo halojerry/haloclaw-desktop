@@ -1,0 +1,191 @@
+/**
+ * Ozon-Claw 主题样式配置
+ * 基于 Ozon 品牌色 (#005BFF) 定制的 UI 主题
+ */
+
+// Ozon-Claw 品牌色彩系统
+:root {
+  // 主色调 - Ozon 蓝
+  --ozon-primary: #005BFF;
+  --ozon-primary-light: #3370FF;
+  --ozon-primary-dark: #0046CC;
+  --ozon-primary-rgb: 0, 91, 255;
+
+  // 辅助色
+  --ozon-success: #00B812;
+  --ozon-success-light: #34C759;
+  --ozon-warning: #FF9500;
+  --ozon-warning-light: #FFCC00;
+  --ozon-danger: #FF3B30;
+  --ozon-danger-light: #FF453A;
+
+  // 背景色
+  --ozon-bg: #F5F7FA;
+  --ozon-bg-light: #FFFFFF;
+  --ozon-bg-dark: #E8ECF0;
+  --ozon-bg-card: #FFFFFF;
+
+  // 文字色
+  --ozon-text-primary: #1A1A1A;
+  --ozon-text-secondary: #6B7280;
+  --ozon-text-tertiary: #9CA3AF;
+  --ozon-text-inverse: #FFFFFF;
+
+  // 边框色
+  --ozon-border: #E5E7EB;
+  --ozon-border-light: #F3F4F6;
+
+  // 阴影
+  --ozon-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --ozon-shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  --ozon-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+  --ozon-shadow-primary: 0 4px 14px rgba(var(--ozon-primary-rgb), 0.35);
+
+  // 圆角
+  --ozon-radius-sm: 6px;
+  --ozon-radius-md: 8px;
+  --ozon-radius-lg: 12px;
+  --ozon-radius-xl: 16px;
+  --ozon-radius-full: 9999px;
+
+  // 间距
+  --ozon-spacing-xs: 4px;
+  --ozon-spacing-sm: 8px;
+  --ozon-spacing-md: 16px;
+  --ozon-spacing-lg: 24px;
+  --ozon-spacing-xl: 32px;
+
+  // 过渡
+  --ozon-transition: all 0.2s ease-in-out;
+}
+
+// 深色模式适配
+:root.dark,
+html.dark {
+  --ozon-bg: #1A1D21;
+  --ozon-bg-light: #22262B;
+  --ozon-bg-dark: #0F1215;
+  --ozon-bg-card: #22262B;
+
+  --ozon-text-primary: #FFFFFF;
+  --ozon-text-secondary: #A0AEC0;
+  --ozon-text-tertiary: #718096;
+
+  --ozon-border: #2D3748;
+  --ozon-border-light: #1A202C;
+}
+
+// Element Plus 主题覆盖
+.el-button--primary {
+  --el-button-bg-color: var(--ozon-primary);
+  --el-button-border-color: var(--ozon-primary);
+  --el-button-hover-bg-color: var(--ozon-primary-light);
+  --el-button-hover-border-color: var(--ozon-primary-light);
+  --el-button-active-bg-color: var(--ozon-primary-dark);
+  --el-button-active-border-color: var(--ozon-primary-dark);
+}
+
+.el-button--success {
+  --el-button-bg-color: var(--ozon-success);
+  --el-button-border-color: var(--ozon-success);
+}
+
+.el-button--warning {
+  --el-button-bg-color: var(--ozon-warning);
+  --el-button-border-color: var(--ozon-warning);
+}
+
+.el-button--danger {
+  --el-button-bg-color: var(--ozon-danger);
+  --el-button-border-color: var(--ozon-danger);
+}
+
+// 通用工具类
+.ozon-container {
+  padding: var(--ozon-spacing-lg);
+  background: var(--ozon-bg);
+  min-height: calc(100vh - 60px);
+}
+
+.ozon-card {
+  background: var(--ozon-bg-card);
+  border-radius: var(--ozon-radius-lg);
+  box-shadow: var(--ozon-shadow-sm);
+  border: 1px solid var(--ozon-border-light);
+  transition: var(--ozon-transition);
+
+  &:hover {
+    box-shadow: var(--ozon-shadow-md);
+  }
+}
+
+.ozon-card-header {
+  padding: var(--ozon-spacing-md) var(--ozon-spacing-lg);
+  border-bottom: 1px solid var(--ozon-border-light);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  .title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--ozon-text-primary);
+  }
+}
+
+.ozon-card-body {
+  padding: var(--ozon-spacing-lg);
+}
+
+// 文字颜色
+.text-primary {
+  color: var(--ozon-text-primary);
+}
+.text-secondary {
+  color: var(--ozon-text-secondary);
+}
+.text-muted {
+  color: var(--ozon-text-tertiary);
+}
+.text-success {
+  color: var(--ozon-success);
+}
+.text-warning {
+  color: var(--ozon-warning);
+}
+.text-danger {
+  color: var(--ozon-danger);
+}
+.text-ozon {
+  color: var(--ozon-primary);
+}
+
+// 状态标签
+.ozon-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: var(--ozon-radius-full);
+  font-size: 12px;
+  font-weight: 500;
+
+  &.tag-success {
+    background: rgba(0, 184, 18, 0.1);
+    color: var(--ozon-success);
+  }
+
+  &.tag-warning {
+    background: rgba(255, 149, 0, 0.1);
+    color: var(--ozon-warning);
+  }
+
+  &.tag-danger {
+    background: rgba(255, 59, 48, 0.1);
+    color: var(--ozon-danger);
+  }
+
+  &.tag-info {
+    background: rgba(0, 91, 255, 0.1);
+    color: var(--ozon-primary);
+  }
+}

@@ -1,0 +1,164 @@
+server:
+  port: 18088
+  servlet:
+    context-path: /
+
+spring:
+  application:
+    name: mateclaw-server
+  messages:
+    basename: messages
+    encoding: UTF-8
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 200MB
+  profiles:
+    active: dev
+
+  # 数据源（默认 H2，生产切换为 mysql profile）
+  datasource:
+    url: jdbc:h2:file:./data/mateclaw;MODE=MySQL;DATABASE_TO_LOWER=TRUE;CASE_INSENSITIVE_IDENTIFIERS=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+
+  # SQL 初始化由 DatabaseBootstrapRunner 接管，关闭 Spring 自动执行
+  sql:
+    init:
+      mode: never
+
+  # Flyway 数据库版本迁移
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    baseline-version: "1"
+    locations:
+      - classpath:db/migration/h2
+    validate-on-migrate: true
+    clean-disabled: true
+
+  h2:
+    console:
+      enabled: ${H2_CONSOLE_ENABLED:false}
+      path: /h2-console
+
+  # Spring AI Alibaba (DashScope) - Spring AI Alibaba 1.1.x 配置路径
+  ai:
+    dashscope:
+      api-key: ${DASHSCOPE_API_KEY:your-dashscope-api-key-here}
+      chat:
+        options:
+          model: qwen-max
+          temperature: 0.7
+          max-tokens: 4096
+    # Spring AI 1.1.x 会话记忆配置（使用内嵌 H2 时无需额外配置）
+    chat:
+      memory:
+        repository:
+          jdbc:
+            initialize-schema: embedded
+    # Spring AI Retry 配置：429/503/529 归为可重试（TransientAiException），启用指数退避
+    retry:
+      max-attempts: 5
+      on-http-codes: 429, 503, 529
+      backoff:
+        initial-interval: 3000
+        multiplier: 3
+        max-interval: 60000
+    # 禁用 Spring AI MCP Client 自动配置（由 McpClientManager 自行管理生命周期）
+    mcp:
+      client:
+        enabled: false
+
+# MyBatis Plus
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+  global-config:
+    db-config:
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+# SpringDoc OpenAPI
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+# MateClaw 自定义配置
+mateclaw:
+  jwt:
+    secret: ${JWT_SECRET:MateClaw-JWT-Secret-Key-2024-Please-Change-In-Production}
+    expiration: 86400000
+  # 搜索配置已迁移至数据库（mate_system_setting 表），通过 UI 系统设置管理
+  # MCP server 配置已迁移至数据库（mate_mcp_server 表），通过 UI 管理
+  mcp:
+    enabled: true
+  skill:
+    workspace:
+      root: ${user.home}/.mateclaw/skills
+      auto-init: true
+      delete-policy: archive
+    hub:
+      base-url: https://clawhub.ai
+      search-path: /api/v1/search
+      http-timeout: 15
+      http-retries: 3
+
+# MateClaw Agent 配置
+mate:
+  agent:
+    graph:
+      observation:
+        max-single-observation-chars: 8000
+        max-total-observation-chars: 24000
+        large-result-threshold: 6000
+        min-rounds-for-summarize: 3
+        head-ratio: 0.4
+        truncation-marker: "\n\n... [内容已截断，共 %d 字符，保留前后关键片段] ...\n\n"
+    tool:
+      timeout:
+        default-timeout-seconds: 300
+        per-category:
+          shell: 120
+          web: 30
+    conversation:
+      window:
+        # 测试时临时调低：2000 token ≈ 2000 中文字，3 轮对话即可触发压缩
+        # 生产环境应改回 128000
+        default-max-input-tokens: 128000
+        compact-trigger-ratio: 0.75
+        preserve-recent-pairs: 2
+        summary-max-tokens: 300
+  # Wiki 知识库配置
+  wiki:
+    enabled: true                       # 是否启用 Wiki 知识库功能
+    max-chunk-size: 30000               # LLM 单次处理最大字符数（超过则分块）
+    max-context-chars: 10000            # 注入 Agent prompt 的 Wiki 摘要最大字符数
+    max-pages-per-raw: 15               # 单个原始材料最多生成的 Wiki 页面数
+    auto-process-on-upload: true        # 上传原始材料后是否自动触发 AI 消化
+    upload-dir: ./data/wiki-uploads     # 上传文件存储目录
+    max-scan-files: 500                 # 目录扫描最大文件数
+    max-scan-file-size: 52428800        # 扫描时跳过大于此大小的文件（字节，默认 50MB）
+
+# 云端API配置（Ozon-Claw Desktop与云端通信）
+mateclaw:
+  cloud-api:
+    base-url: ${CLOUD_API_URL:https://api.ozon-claw.com}
+    new-api-url: ${NEW_API_URL:https://new-api.ozon-claw.com}
+    tenant-id: ${CLOUD_TENANT_ID:ozon-claw-v1}
+    connect-timeout: 10000
+    read-timeout: 30000
+    write-timeout: 30000
+    max-connections: 100
+    max-per-route: 20
+    max-retries: 3
+    retry-enabled: true
+    token-auto-refresh: true
+    token-refresh-threshold: 300
+  new-api-key: ${NEW_API_KEY:}
+

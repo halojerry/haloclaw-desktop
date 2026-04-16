@@ -1,0 +1,46 @@
+{
+  "title": "Device Manager",
+  "description": "Manage logged-in devices, view device status, and unbind devices no longer in use",
+  "currentDevice": "Current Device",
+  "deviceId": "Device ID",
+  "deviceName": "Device Name",
+  "deviceType": "Device Type",
+  "lastHeartbeat": "Last Active",
+  "unknown": "Unknown",
+  "refresh": "Refresh",
+  "resetDevice": "Reset Device",
+  "deviceStats": "Device Statistics",
+  "currentCount": "Current Devices",
+  "deviceLimit": "Device Limit",
+  "remainingSlots": "Remaining Slots",
+  "boundDevices": "Bound Devices",
+  "columns": {
+    "status": "Status",
+    "deviceName": "Device Name",
+    "deviceType": "Device Type",
+    "lastActive": "Last Active",
+    "ipAddress": "IP Address",
+    "actions": "Actions"
+  },
+  "current": "Current",
+  "unbind": "Unbind",
+  "cannotUnbind": "Current Device",
+  "unbindConfirmTitle": "Confirm Unbind Device",
+  "unbindConfirmMessage": "Are you sure you want to unbind the following device? After unbinding, the device needs to re-register.",
+  "cancel": "Cancel",
+  "confirmUnbind": "Confirm Unbind",
+  "resetConfirmTitle": "Confirm Reset Device",
+  "resetConfirmMessage": "Are you sure you want to reset the device? This will clear the locally stored device ID and generate a new device identifier.",
+  "confirm": "Confirm",
+  "resetSuccess": "Device has been reset",
+  "status": {
+    "online": "Online",
+    "offline": "Offline",
+    "banned": "Banned"
+  },
+  "type": {
+    "desktop": "Desktop",
+    "mobile": "Mobile",
+    "web": "Web Browser"
+  }
+}

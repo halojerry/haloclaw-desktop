@@ -1,0 +1,76 @@
+# Ozon-Claw 桌面客户端配置
+# 此配置文件用于 Ozon-Claw 桌面客户端，配置项已写死为默认值
+
+spring:
+  # 数据源配置（使用 H2 内嵌数据库，便于桌面端运行）
+  datasource:
+    url: jdbc:h2:file:./data/ozon-claw;MODE=MySQL;DATABASE_TO_LOWER=TRUE;CASE_INSENSITIVE_IDENTIFIERS=TRUE;AUTO_RECONNECT=TRUE
+    driver-class-name: org.h2.Driver
+    username: ozonclaw
+    password: ozonclaw123
+  # 关闭 Flyway（使用 Java 代码初始化数据库）
+  flyway:
+    enabled: false
+
+# MateClaw/Ozon-Claw 自定义配置
+mateclaw:
+  # JWT 配置
+  jwt:
+    secret: ${JWT_SECRET:OzonClaw-JWT-Secret-Key-2026-DoNotChangeInProduction}
+    expiration: 86400000
+  # MCP 配置
+  mcp:
+    enabled: true
+  # 技能工作区配置
+  skill:
+    workspace:
+      root: ${user.home}/.ozon-claw/skills
+      auto-init: true
+      delete-policy: archive
+    hub:
+      # 写死的 ClawHub 地址
+      base-url: https://clawhub.ai
+      search-path: /api/v1/search
+      http-timeout: 15
+      http-retries: 3
+  # Playwright 浏览器自动化配置
+  playwright:
+    enabled: true
+    browser-type: chromium
+    headless: true
+    timeout: 30000
+    screenshot-dir: ./screenshots
+    max-contexts: 5
+    disable-csp: false
+
+# Ozon-Claw 业务配置
+ozonclaw:
+  # 客户端标识
+  client:
+    version: "1.0.0"
+    build: "ozon-claw-desktop"
+    channel: "production"
+  # API 配置
+  api:
+    base-url: "https://api.ozon-claw.com"
+    tenant-id: "ozon-claw-v1"
+  # New API 配置
+  new-api:
+    base-url: "https://new-api.ozon-claw.com"
+  # Ozon 平台配置
+  ozon:
+    seller-api: "https://api-seller.ozon.ru"
+    api-version: "v3"
+    # API 限流配置
+    rate-limit:
+      max-requests-per-second: 10
+      max-requests-per-minute: 100
+      retry-delay-ms: 5000
+      max-retries: 3
+
+# H2 控制台配置（仅开发时启用）
+spring:
+  h2:
+    console:
+      enabled: ${H2_CONSOLE_ENABLED:false}
+      path: /h2-console

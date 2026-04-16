@@ -1,0 +1,586 @@
+package vip.mate.agent.graph.executor;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.ToolResponseMessage;
+import org.springframework.ai.tool.ToolCallback;
+import vip.mate.tool.builtin.ToolExecutionContext;
+import vip.mate.agent.AgentToolSet;
+import vip.mate.agent.GraphEventPublisher;
+import vip.mate.approval.ApprovalWorkflowService;
+import vip.mate.channel.web.ChatStreamTracker;
+import vip.mate.tool.guard.ToolExecutionGuardHelper;
+import vip.mate.tool.guard.ToolGuard;
+import vip.mate.tool.guard.ToolGuardResult;
+import vip.mate.tool.guard.model.GuardEvaluation;
+import vip.mate.tool.guard.model.ToolInvocationContext;
+import vip.mate.tool.guard.service.ToolGuardService;
+
+import java.util.*;
+import java.util.Collections;
+import java.util.concurrent.*;
+
+/**
+ * 统一工具执行器（共享于 ActionNode 和 StepExecutionNode）
+ * <p>
+ * 两阶段执行模型：
+ * <ol>
+ *   <li><b>Phase 1 — 顺序 Guard + 分段</b>：按原始顺序逐个做 JSON 校验 → ToolGuard → barrier 判定 → callback 查找 + concurrencySafe 分类</li>
+ *   <li><b>Phase 2 — 分段并发执行</b>：barrier 之前的 safe 工具并行执行，unsafe 工具独占执行，结果按原始顺序返回</li>
+ * </ol>
+ * <p>
+ * 审批有前序语义：如果第 N 个工具需要审批，第 N+1、N+2 个工具不会执行。
+ *
+ * @author MateClaw Team
+ */
+@Slf4j
+public class ToolExecutionExecutor {
+
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final ExecutorService TOOL_EXECUTOR = Executors.newFixedThreadPool(
+            Math.max(4, Runtime.getRuntime().availableProcessors()),
+            r -> {
+                Thread t = new Thread(r, "tool-executor");
+                t.setDaemon(true);
+                return t;
+            });
+
+    /** 默认不安全工具列表（写操作、浏览器交互等） */
+    private static final Set<String> DEFAULT_UNSAFE_TOOLS = Set.of(
+            "browser_use", "BrowserUseTool", "write_file", "edit_file"
+    );
+
+    /** 工具结果最大字符数（防止超长结果膨胀 ToolResponseMessage → 撑爆 LLM 上下文） */
+    private static final int MAX_TOOL_RESULT_CHARS = 8000;
+
+    /** 尾部错误模式检测 */
+    private static final java.util.regex.Pattern ERROR_TAIL_PATTERN = java.util.regex.Pattern.compile(
+            "(?i)\\b(error|exception|traceback|failed|fatal|panic|stack.?trace|errno)\\b");
+
+    /**
+     * 智能截断工具结果：检测尾部是否含错误信息，动态调整 head/tail 比例。
+     * 错误信息在尾部时保留 80% tail，确保 agent 能看到错误原因。
+     */
+    static String truncateToolResult(String result, int maxChars) {
+        if (result == null || result.length() <= maxChars) return result;
+        int rawLen = result.length();
+        // 检测尾部 2000 字符是否含错误模式
+        String tailRegion = result.substring(Math.max(0, rawLen - 2000));
+        boolean errorDetected = ERROR_TAIL_PATTERN.matcher(tailRegion).find();
+        double headRatio = errorDetected ? 0.2 : 0.4;
+        if (errorDetected) {
+            log.info("[ToolExecutor] Error pattern detected in tail, preserving 80% tail (headRatio=0.2)");
+        }
+        int headLen = (int) (maxChars * headRatio);
+        int tailLen = maxChars - headLen - 80;
+        if (tailLen <= 0) tailLen = maxChars / 2;
+        log.info("[ToolExecutor] Truncated tool result from {} to {} chars (headRatio={})",
+                rawLen, maxChars, headRatio);
+        return result.substring(0, headLen)
+                + "\n\n... [结果已截断，原始 " + rawLen + " 字符，保留首尾关键片段] ...\n\n"
+                + result.substring(rawLen - tailLen);
+    }
+
+    private final Map<String, ToolCallback> toolCallbackMap;
+    private final ToolGuardService toolGuardService;
+    private final ToolGuard toolGuard; // legacy fallback
+    private final ApprovalWorkflowService approvalService;
+    private final ChatStreamTracker streamTracker;
+    private final vip.mate.config.ToolTimeoutProperties toolTimeoutProperties;
+
+    public ToolExecutionExecutor(AgentToolSet toolSet, ToolGuardService toolGuardService,
+                                  ApprovalWorkflowService approvalService, ChatStreamTracker streamTracker) {
+        this(toolSet, toolGuardService, null, approvalService, streamTracker, null);
+    }
+
+    public ToolExecutionExecutor(AgentToolSet toolSet, ToolGuardService toolGuardService,
+                                  ApprovalWorkflowService approvalService, ChatStreamTracker streamTracker,
+                                  vip.mate.config.ToolTimeoutProperties toolTimeoutProperties) {
+        this(toolSet, toolGuardService, null, approvalService, streamTracker, toolTimeoutProperties);
+    }
+
+    public ToolExecutionExecutor(AgentToolSet toolSet, ToolGuard toolGuard,
+                                  ApprovalWorkflowService approvalService, ChatStreamTracker streamTracker) {
+        this.toolCallbackMap = toolSet.callbackByName();
+        this.toolGuardService = null;
+        this.toolGuard = toolGuard;
+        this.approvalService = approvalService;
+        this.streamTracker = streamTracker;
+        this.toolTimeoutProperties = null;
+    }
+
+    private ToolExecutionExecutor(AgentToolSet toolSet, ToolGuardService toolGuardService,
+                                   ToolGuard toolGuard, ApprovalWorkflowService approvalService,
+                                   ChatStreamTracker streamTracker,
+                                   vip.mate.config.ToolTimeoutProperties toolTimeoutProperties) {
+        this.toolCallbackMap = toolSet.callbackByName();
+        this.toolGuardService = toolGuardService;
+        this.toolGuard = toolGuard;
+        this.approvalService = approvalService;
+        this.streamTracker = streamTracker;
+        this.toolTimeoutProperties = toolTimeoutProperties;
+    }
+
+    private long getToolTimeoutMs(String toolName) {
+        if (toolTimeoutProperties != null) {
+            return toolTimeoutProperties.getTimeoutSeconds(toolName) * 1000L;
+        }
+        return 5 * 60 * 1000L; // default 5 min
+    }
+
+    /**
+     * 执行工具调用列表
+     *
+     * @param toolCalls      LLM 请求的工具调用列表
+     * @param conversationId 会话 ID
+     * @param agentId        Agent ID
+     * @param isReplay       是否为审批通过后的重放模式（跳过 ToolGuard）
+     * @return 执行结果
+     */
+    public ToolExecutionResult execute(List<AssistantMessage.ToolCall> toolCalls,
+                                        String conversationId, String agentId,
+                                        boolean isReplay) {
+        return execute(toolCalls, conversationId, agentId, isReplay, "");
+    }
+
+    /** 当前执行的 requesterId，传递给 ToolExecutionContext */
+    private volatile String currentRequesterId;
+    /** 当前工作区活动目录（为空不限制），传递给 ToolExecutionContext */
+    private volatile String currentWorkspaceBasePath;
+
+    public ToolExecutionResult execute(List<AssistantMessage.ToolCall> toolCalls,
+                                        String conversationId, String agentId,
+                                        boolean isReplay, String requesterId) {
+        return execute(toolCalls, conversationId, agentId, isReplay, requesterId, null);
+    }
+
+    public ToolExecutionResult execute(List<AssistantMessage.ToolCall> toolCalls,
+                                        String conversationId, String agentId,
+                                        boolean isReplay, String requesterId,
+                                        String workspaceBasePath) {
+        this.currentRequesterId = requesterId;
+        this.currentWorkspaceBasePath = workspaceBasePath;
+        List<ToolResponseMessage.ToolResponse> allResponses = new ArrayList<>();
+        List<GraphEventPublisher.GraphEvent> events = Collections.synchronizedList(new ArrayList<>());
+
+        events.add(GraphEventPublisher.phase("action", Map.of("toolCount", toolCalls.size())));
+
+        // ═══ Phase 1: 顺序 Guard + 分段 ═══
+        List<PreparedToolCall> preparedCalls = new ArrayList<>();
+        ApprovalBarrier barrier = null;
+
+        for (int i = 0; i < toolCalls.size(); i++) {
+            AssistantMessage.ToolCall toolCall = toolCalls.get(i);
+            String toolName = toolCall.name();
+            String arguments = toolCall.arguments();
+
+            events.add(GraphEventPublisher.toolStart(toolName, arguments));
+
+            // 1. JSON 校验
+            if (arguments != null && !arguments.isBlank()) {
+                try {
+                    OBJECT_MAPPER.readTree(arguments);
+                } catch (Exception jsonEx) {
+                    log.warn("[ToolExecutor] Tool {} arguments invalid/truncated JSON (len={}): {}",
+                            toolName, arguments.length(), jsonEx.getMessage());
+                    String truncationError = normalizeToolExecutionError(jsonEx);
+                    events.add(GraphEventPublisher.toolComplete(toolName, truncationError, false));
+                    allResponses.add(new ToolResponseMessage.ToolResponse(
+                            toolCall.id(), toolName, truncationError));
+                    continue;
+                }
+            }
+
+            // 2. ToolGuard 安全检查（replay 模式跳过）
+            if (!isReplay) {
+                GuardDecision decision = evaluateGuard(toolCall, toolName, arguments,
+                        conversationId, agentId, toolCalls, i, events, requesterId);
+
+                if (decision.blocked) {
+                    allResponses.add(new ToolResponseMessage.ToolResponse(
+                            toolCall.id(), toolName, decision.response));
+                    continue;
+                }
+                if (decision.needsApproval) {
+                    // Barrier: 当前工具创建审批，后续工具不执行
+                    allResponses.add(new ToolResponseMessage.ToolResponse(
+                            toolCall.id(), toolName, decision.response));
+                    // 标记后续工具为等待审批
+                    for (int j = i + 1; j < toolCalls.size(); j++) {
+                        AssistantMessage.ToolCall remaining = toolCalls.get(j);
+                        allResponses.add(new ToolResponseMessage.ToolResponse(
+                                remaining.id(), remaining.name(),
+                                "[⏳ 等待审批] 前序工具等待审批中，本工具暂缓执行。"));
+                    }
+                    barrier = new ApprovalBarrier(decision.pendingId, toolName);
+                    break;
+                }
+            } else {
+                log.info("[ToolExecutor] Replay mode: skipping guard for pre-approved tool {}", toolName);
+            }
+
+            // 3. Callback 查找（跳过 provider 内置工具，如 Kimi 的 $web_search）
+            if (toolName.startsWith("$")) {
+                log.info("[ToolExecutor] Skipping provider builtin tool: {}", toolName);
+                allResponses.add(new ToolResponseMessage.ToolResponse(
+                        toolCall.id(), toolName, "Provider builtin tool executed server-side"));
+                continue;
+            }
+            ToolCallback callback = toolCallbackMap.get(toolName);
+            if (callback == null) {
+                log.warn("[ToolExecutor] Tool not found: {}", toolName);
+                events.add(GraphEventPublisher.toolComplete(toolName, "Tool not found: " + toolName, false));
+                allResponses.add(new ToolResponseMessage.ToolResponse(
+                        toolCall.id(), toolName, "Tool not found: " + toolName));
+                continue;
+            }
+
+            // 4. 分类: concurrencySafe
+            boolean safe = isConcurrencySafe(toolName);
+            preparedCalls.add(new PreparedToolCall(toolCall, callback, arguments, safe, allResponses.size(),
+                    conversationId, currentRequesterId, currentWorkspaceBasePath));
+            // 占位，Phase 2 填充
+            allResponses.add(null);
+        }
+
+        // ═══ Phase 2: 分段并发执行 ═══
+        if (!preparedCalls.isEmpty()) {
+            executePreparedCalls(preparedCalls, allResponses, events);
+        }
+
+        // 清除 null 占位（不应该有，但防御性处理）
+        allResponses.removeIf(Objects::isNull);
+
+        boolean hasApprovalPending = barrier != null;
+        return new ToolExecutionResult(allResponses, events, hasApprovalPending,
+                barrier != null ? barrier.pendingId : null,
+                barrier != null ? barrier.toolName : null);
+    }
+
+    /**
+     * 执行预批准的工具调用（用于 StepExecutionNode 的 replay 路径）
+     */
+    public ToolResponseMessage.ToolResponse executePreApproved(
+            AssistantMessage.ToolCall toolCall, String storedArguments,
+            List<GraphEventPublisher.GraphEvent> events) {
+        String toolName = toolCall.name();
+        String callArguments = storedArguments != null ? storedArguments : toolCall.arguments();
+
+        ToolCallback callback = toolCallbackMap.get(toolName);
+        if (callback == null) {
+            log.warn("[ToolExecutor] Pre-approved tool not found: {}", toolName);
+            events.add(GraphEventPublisher.toolComplete(toolName, "Tool not found: " + toolName, false));
+            return new ToolResponseMessage.ToolResponse(toolCall.id(), toolName, "Tool not found: " + toolName);
+        }
+
+        try {
+            log.info("[ToolExecutor] Executing pre-approved tool: {}", toolName);
+            String result = callback.call(callArguments);
+            int rawLen = result != null ? result.length() : 0;
+            result = truncateToolResult(result, MAX_TOOL_RESULT_CHARS);
+            log.info("[ToolExecutor] Pre-approved tool {} returned {} chars{}", toolName, rawLen,
+                    result != null && result.length() < rawLen ? " (truncated to " + result.length() + ")" : "");
+            events.add(GraphEventPublisher.toolComplete(toolName, result, true));
+            return new ToolResponseMessage.ToolResponse(
+                    toolCall.id(), toolName, result != null ? result : "");
+        } catch (Exception e) {
+            log.error("[ToolExecutor] Pre-approved tool {} failed: {}", toolName, e.getMessage());
+            events.add(GraphEventPublisher.toolComplete(toolName, e.getMessage(), false));
+            return new ToolResponseMessage.ToolResponse(
+                    toolCall.id(), toolName, "Tool execution failed: " + e.getMessage());
+        }
+    }
+
+    // ==================== Phase 2: 并发执行 ====================
+
+    private void executePreparedCalls(List<PreparedToolCall> preparedCalls,
+                                       List<ToolResponseMessage.ToolResponse> allResponses,
+                                       List<GraphEventPublisher.GraphEvent> events) {
+        if (!preparedCalls.isEmpty() && streamTracker != null) {
+            String conversationId = preparedCalls.get(0).conversationId;
+            String phase = classifyBatchPhase(preparedCalls);
+            streamTracker.updatePhase(conversationId, phase);
+            streamTracker.broadcastObject(conversationId, "phase", GraphEventPublisher.phase(phase, Map.of(
+                    "toolCount", preparedCalls.size()
+            )).data());
+        }
+        // 分组: 连续的 safe 工具可以并行，遇到 unsafe 工具则先等待所有 safe 完成再独占执行
+        List<List<PreparedToolCall>> batches = buildExecutionBatches(preparedCalls);
+
+        for (List<PreparedToolCall> batch : batches) {
+            if (batch.size() == 1) {
+                // 单个工具（safe 或 unsafe），直接执行
+                PreparedToolCall pc = batch.get(0);
+                ToolResponseMessage.ToolResponse response = executeSingleTool(pc, events);
+                allResponses.set(pc.resultIndex, response);
+            } else {
+                // 多个 safe 工具，并行执行
+                executeParallelBatch(batch, allResponses, events);
+            }
+        }
+    }
+
+    /**
+     * 将 prepared calls 分成执行批次：
+     * - 连续的 safe 工具组成一个并行批次
+     * - unsafe 工具单独成为一个批次
+     */
+    private List<List<PreparedToolCall>> buildExecutionBatches(List<PreparedToolCall> preparedCalls) {
+        List<List<PreparedToolCall>> batches = new ArrayList<>();
+        List<PreparedToolCall> currentSafeBatch = new ArrayList<>();
+
+        for (PreparedToolCall pc : preparedCalls) {
+            if (pc.concurrencySafe) {
+                currentSafeBatch.add(pc);
+            } else {
+                // Flush pending safe batch
+                if (!currentSafeBatch.isEmpty()) {
+                    batches.add(new ArrayList<>(currentSafeBatch));
+                    currentSafeBatch.clear();
+                }
+                // Unsafe tool as solo batch
+                batches.add(List.of(pc));
+            }
+        }
+        // Flush remaining safe batch
+        if (!currentSafeBatch.isEmpty()) {
+            batches.add(currentSafeBatch);
+        }
+        return batches;
+    }
+
+    private void executeParallelBatch(List<PreparedToolCall> batch,
+                                       List<ToolResponseMessage.ToolResponse> allResponses,
+                                       List<GraphEventPublisher.GraphEvent> events) {
+        log.info("[ToolExecutor] Executing {} safe tools in parallel: {}",
+                batch.size(), batch.stream().map(pc -> pc.toolCall.name()).toList());
+        long batchStartMs = System.currentTimeMillis();
+
+        Map<Integer, CompletableFuture<ToolResponseMessage.ToolResponse>> futures = new LinkedHashMap<>();
+        for (PreparedToolCall pc : batch) {
+            CompletableFuture<ToolResponseMessage.ToolResponse> future =
+                    CompletableFuture.supplyAsync(() -> executeSingleTool(pc, events), TOOL_EXECUTOR);
+            futures.put(pc.resultIndex, future);
+        }
+
+        // 等待所有并行工具完成，按原始顺序填入结果
+        for (var entry : futures.entrySet()) {
+            try {
+                // 按工具名查找配置的超时时间
+                PreparedToolCall matchedPc = batch.stream()
+                        .filter(p -> p.resultIndex == entry.getKey()).findFirst().orElse(null);
+                long timeoutMs = getToolTimeoutMs(matchedPc != null ? matchedPc.toolCall.name() : null);
+                ToolResponseMessage.ToolResponse response = entry.getValue().get(timeoutMs, TimeUnit.MILLISECONDS);
+                allResponses.set(entry.getKey(), response);
+            } catch (Exception e) {
+                // 超时或异常 — 填入错误响应
+                PreparedToolCall pc = batch.stream()
+                        .filter(p -> p.resultIndex == entry.getKey())
+                        .findFirst().orElse(null);
+                String toolName = pc != null ? pc.toolCall.name() : "unknown";
+                String toolId = pc != null ? pc.toolCall.id() : "";
+                log.error("[ToolExecutor] Parallel tool {} failed: {}", toolName, e.getMessage());
+                allResponses.set(entry.getKey(), new ToolResponseMessage.ToolResponse(
+                        toolId, toolName, normalizeToolExecutionError(
+                        e instanceof ExecutionException ? (Exception) e.getCause() : (Exception) e)));
+            }
+        }
+        log.info("[ToolExecutor] Parallel batch completed: {} tools in {}ms",
+                batch.size(), System.currentTimeMillis() - batchStartMs);
+    }
+
+    private ToolResponseMessage.ToolResponse executeSingleTool(PreparedToolCall pc,
+                                                                List<GraphEventPublisher.GraphEvent> events) {
+        String toolName = pc.toolCall.name();
+        try {
+            if (streamTracker != null) {
+                streamTracker.updateRunningTool(pc.conversationId, toolName);
+                streamTracker.broadcastObject(pc.conversationId, GraphEventPublisher.EVENT_TOOL_START,
+                        GraphEventPublisher.toolStart(toolName, pc.arguments).data());
+            }
+            log.info("[ToolExecutor] Executing tool: {} with args: {}",
+                    toolName, pc.arguments != null && pc.arguments.length() > 200
+                            ? pc.arguments.substring(0, 200) + "..." : pc.arguments);
+
+            // 注入工具执行上下文（供 VideoGenerateTool 等获取 conversationId / username / workspaceBasePath）
+            ToolExecutionContext.set(pc.conversationId, pc.requesterId, pc.workspaceBasePath);
+            String result;
+            try {
+                result = pc.callback.call(pc.arguments);
+            } finally {
+                ToolExecutionContext.clear();
+            }
+
+            int rawLen = result != null ? result.length() : 0;
+            result = truncateToolResult(result, MAX_TOOL_RESULT_CHARS);
+            log.info("[ToolExecutor] Tool {} returned {} chars{}", toolName, rawLen,
+                    result != null && result.length() < rawLen ? " (truncated to " + result.length() + ")" : "");
+            events.add(GraphEventPublisher.toolComplete(toolName, result, true));
+            if (streamTracker != null) {
+                streamTracker.broadcastObject(pc.conversationId, GraphEventPublisher.EVENT_TOOL_COMPLETE,
+                        GraphEventPublisher.toolComplete(toolName, result, true).data());
+                streamTracker.updateRunningTool(pc.conversationId, null);
+            }
+            return new ToolResponseMessage.ToolResponse(
+                    pc.toolCall.id(), toolName, result != null ? result : "");
+        } catch (Exception e) {
+            log.error("[ToolExecutor] Tool {} execution failed: {}", toolName, e.getMessage(), e);
+            String normalizedError = normalizeToolExecutionError(e);
+            events.add(GraphEventPublisher.toolComplete(toolName, normalizedError, false));
+            if (streamTracker != null) {
+                streamTracker.broadcastObject(pc.conversationId, GraphEventPublisher.EVENT_TOOL_COMPLETE,
+                        GraphEventPublisher.toolComplete(toolName, normalizedError, false).data());
+                streamTracker.updateRunningTool(pc.conversationId, null);
+            }
+            return new ToolResponseMessage.ToolResponse(
+                    pc.toolCall.id(), toolName, normalizedError);
+        }
+    }
+
+    // ==================== Guard 评估 ====================
+
+    private GuardDecision evaluateGuard(AssistantMessage.ToolCall toolCall, String toolName, String arguments,
+                                         String conversationId, String agentId,
+                                         List<AssistantMessage.ToolCall> allToolCalls, int currentIndex,
+                                         List<GraphEventPublisher.GraphEvent> events, String requesterId) {
+        ToolInvocationContext guardCtx = ToolInvocationContext.of(toolName, arguments, conversationId, agentId);
+
+        if (toolGuardService != null) {
+            GuardEvaluation evaluation = toolGuardService.evaluate(guardCtx);
+
+            if (evaluation.shouldBlock()) {
+                log.warn("[ToolExecutor] Tool call BLOCKED: tool={}, summary={}", toolName, evaluation.summary());
+                events.add(GraphEventPublisher.toolComplete(toolName, evaluation.summary(), false));
+                return GuardDecision.blocked(
+                        "[安全拦截] " + evaluation.summary() + "。请使用更安全的替代方案。");
+            }
+
+            if (evaluation.shouldRequireApproval()) {
+                List<AssistantMessage.ToolCall> remaining = allToolCalls.subList(currentIndex + 1, allToolCalls.size());
+                String approvalResponse = ToolExecutionGuardHelper.handleToolApproval(
+                        toolCall, toolName, arguments, evaluation,
+                        conversationId, agentId, requesterId, approvalService, streamTracker,
+                        events, remaining);
+                // Extract pendingId from response (format: "[APPROVAL_PENDING] tool=xxx awaiting user decision")
+                return GuardDecision.needsApproval(approvalResponse, extractPendingId(approvalResponse));
+            }
+        } else if (toolGuard != null) {
+            ToolGuardResult guardResult = toolGuard.check(toolName, arguments);
+
+            if (guardResult.isBlocked()) {
+                log.warn("[ToolExecutor] Tool call BLOCKED by ToolGuard: tool={}, reason={}", toolName, guardResult.reason());
+                events.add(GraphEventPublisher.toolComplete(toolName, guardResult.reason(), false));
+                return GuardDecision.blocked(
+                        "[安全拦截] " + guardResult.reason() + "。请使用更安全的替代方案。");
+            }
+
+            if (guardResult.needsApproval()) {
+                List<AssistantMessage.ToolCall> remaining = allToolCalls.subList(currentIndex + 1, allToolCalls.size());
+                String approvalResponse = ToolExecutionGuardHelper.handleToolApprovalLegacy(
+                        toolCall, toolName, arguments, guardResult,
+                        conversationId, agentId, requesterId, approvalService, streamTracker,
+                        events, remaining);
+                return GuardDecision.needsApproval(approvalResponse, extractPendingId(approvalResponse));
+            }
+        }
+
+        return GuardDecision.allowed();
+    }
+
+    // ==================== 辅助方法 ====================
+
+    /**
+     * 判断工具是否并发安全
+     */
+    private boolean isConcurrencySafe(String toolName) {
+        return !DEFAULT_UNSAFE_TOOLS.contains(toolName);
+    }
+
+    private String classifyBatchPhase(List<PreparedToolCall> preparedCalls) {
+        boolean memoryOnly = preparedCalls.stream().allMatch(pc ->
+                "read_workspace_memory_file".equals(pc.toolCall.name())
+                        || "list_workspace_memory_files".equals(pc.toolCall.name()));
+        return memoryOnly ? "reading_memory" : "executing_tool";
+    }
+
+    private String normalizeToolExecutionError(Exception e) {
+        String message = e != null && e.getMessage() != null ? e.getMessage() : "Unknown error";
+        String lower = message.toLowerCase(Locale.ROOT);
+
+        if (lower.contains("conversion from json")
+                || lower.contains("unexpected end-of-input")
+                || lower.contains("unexpected character escape sequence")
+                || lower.contains("json parse error")
+                || lower.contains("malformed json")) {
+            return "Tool execution failed: model generated invalid JSON for tool arguments. "
+                    + "或在字符串转义位置被截断。请改为分步骤写入，拆成多个文件，或缩小单次 write_file/edit_file 的内容后重试。";
+        }
+
+        if (lower.contains("access denied") && lower.contains("path outside allowed directories")) {
+            // 提取目标路径和允许路径
+            return "Tool execution failed: target path is outside the allowed workspace directory.";
+        }
+
+        return "Tool execution failed: " + message;
+    }
+
+    /**
+     * 从 approval response 中提取 pendingId（best-effort）
+     */
+    private String extractPendingId(String approvalResponse) {
+        // handleToolApproval 内部已经创建了 pending，这里只做标记
+        return approvalResponse;
+    }
+
+    // ==================== 内部数据类 ====================
+
+    private record PreparedToolCall(
+            AssistantMessage.ToolCall toolCall,
+            ToolCallback callback,
+            String arguments,
+            boolean concurrencySafe,
+            int resultIndex,
+            String conversationId,
+            String requesterId,
+            String workspaceBasePath
+    ) {}
+
+    private record ApprovalBarrier(String pendingId, String toolName) {}
+
+    private static final class GuardDecision {
+        final boolean blocked;
+        final boolean needsApproval;
+        final String response;
+        final String pendingId;
+
+        private GuardDecision(boolean blocked, boolean needsApproval, String response, String pendingId) {
+            this.blocked = blocked;
+            this.needsApproval = needsApproval;
+            this.response = response;
+            this.pendingId = pendingId;
+        }
+
+        static GuardDecision allowed() { return new GuardDecision(false, false, null, null); }
+        static GuardDecision blocked(String response) { return new GuardDecision(true, false, response, null); }
+        static GuardDecision needsApproval(String response, String pendingId) {
+            return new GuardDecision(false, true, response, pendingId);
+        }
+    }
+
+    /**
+     * 工具执行结果
+     */
+    public record ToolExecutionResult(
+            /** 所有工具的响应（按原始顺序） */
+            List<ToolResponseMessage.ToolResponse> responses,
+            /** 执行过程中的事件 */
+            List<GraphEventPublisher.GraphEvent> events,
+            /** 是否有待审批的工具 */
+            boolean awaitingApproval,
+            /** 审批 pending ID（如果 awaitingApproval=true） */
+            String pendingId,
+            /** 触发审批 barrier 的工具名（如果 awaitingApproval=true） */
+            String barrierToolName
+    ) {}
+}

@@ -1,0 +1,18 @@
+package vip.mate.auth.model;
+
+import lombok.AllArgsConstructor;
+import lombok.Data;
+
+/**
+ * 登录响应
+ *
+ * @author MateClaw Team
+ */
+@Data
+@AllArgsConstructor
+public class LoginResponse {
+    private String token;
+    private String username;
+    private String nickname;
+    private String role;
+}

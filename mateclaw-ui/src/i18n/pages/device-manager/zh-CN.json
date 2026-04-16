@@ -1,0 +1,46 @@
+{
+  "title": "设备管理",
+  "description": "管理已登录的设备，查看设备状态，解绑不再使用的设备",
+  "currentDevice": "当前设备",
+  "deviceId": "设备ID",
+  "deviceName": "设备名称",
+  "deviceType": "设备类型",
+  "lastHeartbeat": "最后活跃",
+  "unknown": "未知",
+  "refresh": "刷新",
+  "resetDevice": "重置设备",
+  "deviceStats": "设备统计",
+  "currentCount": "当前设备数",
+  "deviceLimit": "设备上限",
+  "remainingSlots": "剩余槽位",
+  "boundDevices": "已绑定设备",
+  "columns": {
+    "status": "状态",
+    "deviceName": "设备名称",
+    "deviceType": "设备类型",
+    "lastActive": "最后活跃",
+    "ipAddress": "IP地址",
+    "actions": "操作"
+  },
+  "current": "当前",
+  "unbind": "解绑",
+  "cannotUnbind": "当前设备",
+  "unbindConfirmTitle": "确认解绑设备",
+  "unbindConfirmMessage": "确定要解绑以下设备吗？解绑后该设备需要重新注册。",
+  "cancel": "取消",
+  "confirmUnbind": "确认解绑",
+  "resetConfirmTitle": "确认重置设备",
+  "resetConfirmMessage": "确定要重置设备吗？这将清除本地存储的设备ID，重新生成新的设备标识。",
+  "confirm": "确认",
+  "resetSuccess": "设备已重置",
+  "status": {
+    "online": "在线",
+    "offline": "离线",
+    "banned": "禁用"
+  },
+  "type": {
+    "desktop": "桌面端",
+    "mobile": "移动端",
+    "web": "浏览器端"
+  }
+}

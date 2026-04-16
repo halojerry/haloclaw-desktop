@@ -1,0 +1,1105 @@
+package vip.mate.channel.feishu;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.lark.oapi.event.EventDispatcher;
+import com.lark.oapi.service.im.ImService;
+import com.lark.oapi.service.im.v1.model.P2MessageReceiveV1;
+import lombok.extern.slf4j.Slf4j;
+import vip.mate.channel.AbstractChannelAdapter;
+import vip.mate.channel.ChannelMessage;
+import vip.mate.channel.ChannelMessageRouter;
+import vip.mate.channel.ExponentialBackoff;
+import vip.mate.channel.model.ChannelEntity;
+import vip.mate.workspace.conversation.model.MessageContentPart;
+
+import java.io.InputStream;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * 飞书渠道适配器
+ * <p>
+ * 飞书渠道实现：
+ * - 接入模式：Event Subscription（HTTP 回调）或 WebSocket 长连接
+ * - 发送方式：通过 Open API 发送消息
+ * - 消息去重：基于 message_id 防止重复处理
+ * <p>
+ * 配置项（configJson）：
+ * - app_id: 飞书应用 App ID
+ * - app_secret: 飞书应用 App Secret
+ * - connection_mode: 接入模式 "webhook"（默认）或 "websocket"
+ * - domain: "feishu"（默认）或 "lark"（国际版）
+ * - encrypt_key: 事件加密密钥（可选）
+ * - verification_token: 事件验证 Token（可选）
+ * - enable_reaction: 是否在收到消息后添加表情反应（默认 true）
+ * - enable_nickname_cache: 是否通过 Contact API 获取用户昵称（默认 true）
+ * - media_download_enabled: 是否下载消息中的媒体文件（默认 false）
+ *
+ * @author MateClaw Team
+ */
+@Slf4j
+public class FeishuChannelAdapter extends AbstractChannelAdapter {
+
+    public static final String CHANNEL_TYPE = "feishu";
+
+    private HttpClient httpClient;
+    private String tenantAccessToken;
+    private long tokenExpireTime;
+
+    /** 定时 Token 刷新任务 */
+    private ScheduledFuture<?> tokenRefreshFuture;
+
+    /** 消息去重：最近处理过的 message_id */
+    private final Set<String> processedMessageIds = ConcurrentHashMap.newKeySet();
+
+    /** 昵称缓存：open_id → 显示名称 */
+    private final ConcurrentHashMap<String, String> nicknameCache = new ConcurrentHashMap<>();
+    private static final int NICKNAME_CACHE_MAX = 500;
+
+    /** WebSocket 客户端（websocket 模式） */
+    private volatile com.lark.oapi.ws.Client wsClient;
+
+    /** WebSocket 连接线程 */
+    private volatile Thread wsThread;
+
+    public FeishuChannelAdapter(ChannelEntity channelEntity,
+                                ChannelMessageRouter messageRouter,
+                                ObjectMapper objectMapper) {
+        super(channelEntity, messageRouter, objectMapper);
+        // 飞书 WebSocket 重连：2s→4s→8s→16s→30s，无限重试
+        this.backoff = new ExponentialBackoff(2000, 30000, 2.0, -1);
+    }
+
+    // ==================== 生命周期 ====================
+
+    @Override
+    protected void doStart() {
+        String appId = getConfigString("app_id");
+        String appSecret = getConfigString("app_secret");
+
+        if (appId == null || appSecret == null) {
+            throw new IllegalStateException("Feishu channel requires app_id and app_secret in configJson");
+        }
+
+        // HttpClient 两种模式都需要（发送消息、下载媒体、联系人 API）
+        this.httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(10))
+                .build();
+
+        // 获取初始 tenant_access_token
+        refreshTenantAccessToken();
+
+        // 定时刷新 Token：过期前 5 分钟自动刷新
+        scheduleTokenRefresh();
+
+        String connectionMode = getConfigString("connection_mode", "webhook");
+        if ("websocket".equals(connectionMode)) {
+            startWebSocket(appId, appSecret);
+        } else {
+            log.info("[feishu] Webhook mode, waiting for callbacks at /api/v1/channels/webhook/feishu");
+        }
+
+        log.info("[feishu] Feishu channel initialized: appId={}, mode={}, domain={}",
+                appId, connectionMode, getConfigString("domain", "feishu"));
+    }
+
+    @Override
+    protected void doStop() {
+        // 取消定时 Token 刷新
+        if (tokenRefreshFuture != null) {
+            tokenRefreshFuture.cancel(false);
+            tokenRefreshFuture = null;
+        }
+
+        // 关闭 WebSocket
+        stopWebSocket();
+
+        this.httpClient = null;
+        this.tenantAccessToken = null;
+        this.processedMessageIds.clear();
+        this.nicknameCache.clear();
+        log.info("[feishu] Feishu channel stopped");
+    }
+
+    @Override
+    protected void doReconnect() {
+        String appId = getConfigString("app_id");
+        String appSecret = getConfigString("app_secret");
+        String connectionMode = getConfigString("connection_mode", "webhook");
+
+        // 重新建立 HTTP 客户端
+        this.httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(10))
+                .build();
+
+        try {
+            refreshTenantAccessToken();
+        } catch (Exception e) {
+            log.warn("[feishu] Token refresh during reconnect failed: {}", e.getMessage());
+        }
+
+        if ("websocket".equals(connectionMode)) {
+            log.info("[feishu] Reconnecting WebSocket...");
+            stopWebSocket();
+            // 同步连接：在当前重连线程中直接阻塞调用 start()
+            // 连接成功 start() 会一直阻塞（不会返回到这里）
+            // 连接失败 start() 抛异常，由 AbstractChannelAdapter.scheduleReconnect 捕获并触发 onReconnectFailed
+            startWebSocketSync(appId, appSecret);
+        }
+
+        log.info("[feishu] Reconnect completed for: {}", channelEntity.getName());
+    }
+
+    // ==================== WebSocket 长连接 ====================
+
+    /**
+     * 创建 WebSocket 客户端实例（不启动连接）
+     */
+    private com.lark.oapi.ws.Client createWsClient(String appId, String appSecret) {
+        EventDispatcher eventDispatcher = EventDispatcher.newBuilder("", "")
+                .onP2MessageReceiveV1(new ImService.P2MessageReceiveV1Handler() {
+                    @Override
+                    public void handle(P2MessageReceiveV1 event) throws Exception {
+                        if (!running.get()) return;
+
+                        // 检查 app_id 匹配（防止多实例事件错路由）
+                        if (event.getHeader() != null && event.getHeader().getAppId() != null
+                                && !event.getHeader().getAppId().equals(appId)) {
+                            log.debug("[feishu] Dropping misrouted event, app_id={} (expected {})",
+                                    event.getHeader().getAppId(), appId);
+                            return;
+                        }
+
+                        try {
+                            handleWebSocketEvent(event);
+                        } catch (Exception e) {
+                            log.error("[feishu] Failed to handle WebSocket event: {}", e.getMessage(), e);
+                        }
+                    }
+                })
+                .build();
+
+        return new com.lark.oapi.ws.Client.Builder(appId, appSecret)
+                .eventHandler(eventDispatcher)
+                .autoReconnect(false)  // 由我们的 ExponentialBackoff 控制重连，不用 SDK 内置重连
+                .domain("lark".equals(getConfigString("domain", "feishu"))
+                        ? "https://open.larksuite.com"
+                        : "https://open.feishu.cn")
+                .build();
+    }
+
+    /**
+     * 启动 WebSocket 长连接（异步，用于 doStart 首次启动）
+     * 在守护线程中运行，避免阻塞主线程。连接失败时触发 onDisconnected → 退避重连
+     */
+    private void startWebSocket(String appId, String appSecret) {
+        wsClient = createWsClient(appId, appSecret);
+
+        wsThread = new Thread(() -> {
+            try {
+                log.info("[feishu] WebSocket connecting (long connection)...");
+                wsClient.start();
+                // start() blocks until disconnect; if it returns normally, it means disconnected
+                if (running.get()) {
+                    onDisconnected("WebSocket connection ended");
+                }
+            } catch (Exception e) {
+                log.error("[feishu] WebSocket error: {}", e.getMessage(), e);
+                if (running.get()) {
+                    onDisconnected("WebSocket error: " + e.getMessage());
+                }
+            }
+        }, "feishu-ws-" + channelEntity.getId());
+        wsThread.setDaemon(true);
+        wsThread.start();
+    }
+
+    /**
+     * 启动 WebSocket 长连接（同步，用于 doReconnect 重连线程）
+     * 在当前线程中阻塞调用 start()：
+     * - 连接成功后 start() 会一直阻塞（收消息），不会返回
+     * - 连接失败 start() 抛异常，由 scheduleReconnect 的 catch 捕获 → onReconnectFailed → 退避递增
+     */
+    private void startWebSocketSync(String appId, String appSecret) {
+        wsClient = createWsClient(appId, appSecret);
+        log.info("[feishu] WebSocket connecting (long connection)...");
+        wsClient.start(); // 阻塞：成功则永驻，失败则抛异常
+    }
+
+    /**
+     * 关闭 WebSocket 连接
+     * SDK 的 start() 在线程中阻塞运行，通过中断线程来触发停止
+     */
+    private void stopWebSocket() {
+        if (wsThread != null) {
+            wsThread.interrupt();
+            wsThread = null;
+        }
+        wsClient = null;
+    }
+
+    /**
+     * 处理 WebSocket 事件：从 P2MessageReceiveV1 提取字段，调用统一入口
+     */
+    private void handleWebSocketEvent(P2MessageReceiveV1 event) {
+        var eventBody = event.getEvent();
+        if (eventBody == null || eventBody.getMessage() == null) {
+            return;
+        }
+
+        var message = eventBody.getMessage();
+        var sender = eventBody.getSender();
+
+        String messageId = message.getMessageId();
+        String messageType = message.getMessageType();
+        String contentStr = message.getContent();
+        String chatId = message.getChatId();
+        String chatType = message.getChatType();
+
+        String senderOpenId = null;
+        if (sender != null && sender.getSenderId() != null) {
+            senderOpenId = sender.getSenderId().getOpenId();
+        }
+
+        handleFeishuMessage(messageId, messageType, contentStr, chatId, chatType, senderOpenId, event);
+    }
+
+    // ==================== Token 管理 ====================
+
+    /**
+     * 定时刷新 Token：每隔 (expireSeconds - 300) 秒刷新一次
+     */
+    private void scheduleTokenRefresh() {
+        // Token 默认有效期 7200s，提前 5 分钟刷新 => 周期 6900s
+        long refreshIntervalSeconds = Math.max(300, 7200 - 300);
+        tokenRefreshFuture = ensureReconnectScheduler().scheduleAtFixedRate(() -> {
+            if (!running.get()) return;
+            try {
+                refreshTenantAccessToken();
+                log.debug("[feishu] Scheduled token refresh succeeded");
+            } catch (Exception e) {
+                log.warn("[feishu] Scheduled token refresh failed: {}, will retry on next interval",
+                        e.getMessage());
+                lastError = "Token refresh failed: " + e.getMessage();
+            }
+        }, refreshIntervalSeconds, refreshIntervalSeconds, TimeUnit.SECONDS);
+        log.info("[feishu] Token auto-refresh scheduled every {}s", refreshIntervalSeconds);
+    }
+
+    /**
+     * 获取/刷新 tenant_access_token
+     */
+    private void refreshTenantAccessToken() {
+        String appId = getConfigString("app_id");
+        String appSecret = getConfigString("app_secret");
+        String apiBase = getApiBaseUrl();
+
+        try {
+            String jsonBody = objectMapper.writeValueAsString(Map.of(
+                    "app_id", appId,
+                    "app_secret", appSecret
+            ));
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(apiBase + "/open-apis/auth/v3/tenant_access_token/internal"))
+                    .header("Content-Type", "application/json; charset=utf-8")
+                    .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            @SuppressWarnings("unchecked")
+            Map<String, Object> result = objectMapper.readValue(response.body(), Map.class);
+
+            Integer code = result.get("code") instanceof Number n ? n.intValue() : null;
+            if (code != null && code != 0) {
+                throw new RuntimeException("Feishu API error: code=" + code + ", msg=" + result.get("msg"));
+            }
+
+            this.tenantAccessToken = (String) result.get("tenant_access_token");
+            Object expire = result.get("expire");
+            int expireSeconds = expire instanceof Number n ? n.intValue() : 7200;
+            this.tokenExpireTime = System.currentTimeMillis() + (expireSeconds - 300) * 1000L;
+
+            log.info("[feishu] tenant_access_token refreshed, expires in {}s", expireSeconds);
+
+        } catch (Exception e) {
+            log.error("[feishu] Failed to refresh tenant_access_token: {}", e.getMessage(), e);
+            throw new RuntimeException("Token refresh failed: " + e.getMessage(), e);
+        }
+    }
+
+    private void ensureTokenValid() {
+        if (tenantAccessToken == null || System.currentTimeMillis() >= tokenExpireTime) {
+            try {
+                refreshTenantAccessToken();
+            } catch (Exception e) {
+                log.warn("[feishu] On-demand token refresh failed: {}", e.getMessage());
+            }
+        }
+    }
+
+    // ==================== Domain 国际化 ====================
+
+    /**
+     * 获取 API 基础 URL
+     * domain=feishu → https://open.feishu.cn
+     * domain=lark  → https://open.larksuite.com
+     */
+    private String getApiBaseUrl() {
+        String domain = getConfigString("domain", "feishu");
+        return "lark".equals(domain)
+                ? "https://open.larksuite.com"
+                : "https://open.feishu.cn";
+    }
+
+    // ==================== Webhook 处理 ====================
+
+    /**
+     * 处理飞书 Event Subscription 回调
+     * 由 ChannelWebhookController 调用
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> handleWebhook(Map<String, Object> payload) {
+        // 处理 URL 验证请求
+        String type = (String) payload.get("type");
+        if ("url_verification".equals(type)) {
+            String challenge = (String) payload.get("challenge");
+            log.info("[feishu] URL verification challenge received");
+            return Map.of("challenge", challenge != null ? challenge : "");
+        }
+
+        try {
+            // 解析 v2 事件格式
+            Map<String, Object> header = (Map<String, Object>) payload.get("header");
+            Map<String, Object> event = (Map<String, Object>) payload.get("event");
+
+            if (header == null || event == null) {
+                log.warn("[feishu] Invalid event payload: missing header or event");
+                return Map.of("code", 0);
+            }
+
+            String eventType = (String) header.get("event_type");
+            if (!"im.message.receive_v1".equals(eventType)) {
+                log.debug("[feishu] Ignoring event type: {}", eventType);
+                return Map.of("code", 0);
+            }
+
+            // 解析消息
+            Map<String, Object> message = (Map<String, Object>) event.get("message");
+            if (message == null) {
+                return Map.of("code", 0);
+            }
+
+            String messageId = (String) message.get("message_id");
+            String messageType = (String) message.get("message_type");
+            String contentStr = (String) message.get("content");
+            String chatId = (String) message.get("chat_id");
+            String chatType = (String) message.get("chat_type");
+
+            // 提取发送者 open_id
+            Map<String, Object> sender = (Map<String, Object>) event.get("sender");
+            String senderOpenId = null;
+            if (sender != null) {
+                Map<String, Object> senderIdObj = (Map<String, Object>) sender.get("sender_id");
+                if (senderIdObj != null) {
+                    senderOpenId = (String) senderIdObj.get("open_id");
+                }
+            }
+
+            handleFeishuMessage(messageId, messageType, contentStr, chatId, chatType, senderOpenId, payload);
+
+        } catch (Exception e) {
+            log.error("[feishu] Failed to handle webhook: {}", e.getMessage(), e);
+        }
+
+        return Map.of("code", 0);
+    }
+
+    // ==================== 统一消息处理入口 ====================
+
+    /**
+     * 统一消息处理入口（Webhook 和 WebSocket 共用）
+     *
+     * @param messageId    消息 ID
+     * @param messageType  消息类型（text/image/post/file/audio/media）
+     * @param contentStr   消息内容 JSON 字符串
+     * @param chatId       群组 ID（私聊为 null）
+     * @param chatType     "p2p" 或 "group"
+     * @param senderOpenId 发送者 open_id
+     * @param rawPayload   原始负载（用于调试）
+     */
+    private void handleFeishuMessage(String messageId, String messageType, String contentStr,
+                                      String chatId, String chatType, String senderOpenId,
+                                      Object rawPayload) {
+        // 消息去重
+        if (messageId != null && !processedMessageIds.add(messageId)) {
+            log.debug("[feishu] Duplicate message_id: {}, skipping", messageId);
+            return;
+        }
+        cleanupProcessedIds();
+
+        // 添加消息反应（非阻塞，表示"已收到"）
+        if (messageId != null && getConfigBoolean("enable_reaction", true)) {
+            addReactionAsync(messageId, "THUMBSUP");
+        }
+
+        // 获取用户昵称
+        String senderName = senderOpenId;
+        if (senderOpenId != null && getConfigBoolean("enable_nickname_cache", true)) {
+            senderName = getUserName(senderOpenId);
+        }
+
+        // 解析消息内容
+        List<MessageContentPart> contentParts = new ArrayList<>();
+        String textContent = extractContentParts(messageId, messageType, contentStr, contentParts);
+
+        if (contentParts.isEmpty() && (textContent == null || textContent.isBlank())) {
+            log.debug("[feishu] Empty message content, ignoring");
+            return;
+        }
+
+        // 生成短会话后缀
+        boolean isGroup = "group".equals(chatType);
+        String shortSuffix = generateShortSessionSuffix(chatId, senderOpenId, isGroup);
+
+        ChannelMessage channelMessage = ChannelMessage.builder()
+                .messageId(messageId)
+                .channelType(CHANNEL_TYPE)
+                .senderId(senderOpenId)
+                .senderName(senderName)
+                .chatId(isGroup ? shortSuffix : null)
+                .content(textContent != null ? textContent : "")
+                .contentType(messageType)
+                .contentParts(contentParts)
+                .timestamp(LocalDateTime.now())
+                .rawPayload(rawPayload)
+                .build();
+
+        // replyToken 保留完整 chatId（发送消息需要完整 ID）
+        channelMessage.setReplyToken(chatId);
+        onMessage(channelMessage);
+    }
+
+    /**
+     * 清理旧的去重记录：超过 1000 条时保留最近添加的（移除最早的一半）
+     */
+    private void cleanupProcessedIds() {
+        if (processedMessageIds.size() > 1000) {
+            int toRemove = processedMessageIds.size() / 2;
+            var iterator = processedMessageIds.iterator();
+            while (iterator.hasNext() && toRemove > 0) {
+                iterator.next();
+                iterator.remove();
+                toRemove--;
+            }
+        }
+    }
+
+    // ==================== 消息反应 ====================
+
+    /**
+     * 非阻塞地给消息添加表情反应
+     * 在新线程中执行，失败只 log.debug 不影响主流程
+     */
+    private void addReactionAsync(String messageId, String emojiType) {
+        Thread reactionThread = new Thread(() -> {
+            try {
+                ensureTokenValid();
+                String apiBase = getApiBaseUrl();
+                String jsonBody = objectMapper.writeValueAsString(Map.of(
+                        "reaction_type", Map.of("emoji_type", emojiType)
+                ));
+
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(URI.create(apiBase + "/open-apis/im/v1/messages/" + messageId + "/reactions"))
+                        .header("Content-Type", "application/json; charset=utf-8")
+                        .header("Authorization", "Bearer " + tenantAccessToken)
+                        .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+                        .timeout(Duration.ofSeconds(5))
+                        .build();
+
+                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                if (response.statusCode() != 200) {
+                    log.debug("[feishu] Add reaction failed: status={}, body={}", response.statusCode(), response.body());
+                } else {
+                    log.debug("[feishu] Reaction {} added to message {}", emojiType, messageId);
+                }
+            } catch (Exception e) {
+                log.debug("[feishu] Add reaction error: {}", e.getMessage());
+            }
+        }, "feishu-reaction");
+        reactionThread.setDaemon(true);
+        reactionThread.start();
+    }
+
+    // ==================== 联系人昵称 ====================
+
+    /**
+     * 通过 open_id 获取用户昵称
+     * 优先查缓存 → 调用 Contact API → 降级返回 open_id 后缀
+     */
+    @SuppressWarnings("unchecked")
+    private String getUserName(String openId) {
+        if (openId == null || openId.isBlank()) return openId;
+
+        // 1. 查缓存
+        String cached = nicknameCache.get(openId);
+        if (cached != null) return cached;
+
+        // 2. 调用 Contact API
+        try {
+            ensureTokenValid();
+            String apiBase = getApiBaseUrl();
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(apiBase + "/open-apis/contact/v3/users/" + openId + "?user_id_type=open_id"))
+                    .header("Authorization", "Bearer " + tenantAccessToken)
+                    .timeout(Duration.ofSeconds(2))
+                    .GET()
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() == 200) {
+                Map<String, Object> result = objectMapper.readValue(response.body(), Map.class);
+                Integer code = result.get("code") instanceof Number n ? n.intValue() : null;
+                if (code != null && code == 0) {
+                    Map<String, Object> data = (Map<String, Object>) result.get("data");
+                    if (data != null) {
+                        Map<String, Object> user = (Map<String, Object>) data.get("user");
+                        if (user != null) {
+                            String name = firstNonBlank(
+                                    (String) user.get("name"),
+                                    (String) user.get("en_name")
+                            );
+                            if (name != null) {
+                                // 缓存超限时清理最早的一半
+                                if (nicknameCache.size() >= NICKNAME_CACHE_MAX) {
+                                    int toRemove = nicknameCache.size() / 2;
+                                    var iterator = nicknameCache.keySet().iterator();
+                                    while (iterator.hasNext() && toRemove > 0) {
+                                        iterator.next();
+                                        iterator.remove();
+                                        toRemove--;
+                                    }
+                                }
+                                nicknameCache.put(openId, name);
+                                return name;
+                            }
+                        }
+                    }
+                } else {
+                    log.debug("[feishu] Contact API error for {}: code={}", openId, code);
+                }
+            }
+        } catch (Exception e) {
+            log.debug("[feishu] getUserName failed for {}: {}", openId, e.getMessage());
+        }
+
+        // 3. 降级：返回 open_id 后 6 位
+        String fallback = openId.length() > 6 ? openId.substring(openId.length() - 6) : openId;
+        return fallback;
+    }
+
+    private static String firstNonBlank(String... values) {
+        for (String v : values) {
+            if (v != null && !v.isBlank()) return v.trim();
+        }
+        return null;
+    }
+
+    // ==================== 会话 ID 优化 ====================
+
+    /**
+     * 生成更短的会话标识后缀
+     * - 群聊：app_id 后 4 位 + "_" + chat_id 后 8 位
+     * - 私聊：open_id 后 12 位
+     */
+    private String generateShortSessionSuffix(String chatId, String openId, boolean isGroup) {
+        if (isGroup && chatId != null) {
+            String appId = getConfigString("app_id", "");
+            String appSuffix = appId.length() >= 4 ? appId.substring(appId.length() - 4) : appId;
+            String chatSuffix = chatId.length() >= 8 ? chatId.substring(chatId.length() - 8) : chatId;
+            return appSuffix + "_" + chatSuffix;
+        }
+        if (openId != null) {
+            return openId.length() >= 12 ? openId.substring(openId.length() - 12) : openId;
+        }
+        if (chatId != null) {
+            return chatId.length() >= 12 ? chatId.substring(chatId.length() - 12) : chatId;
+        }
+        return null;
+    }
+
+    // ==================== 消息内容解析 ====================
+
+    /**
+     * 解析飞书消息内容为 contentParts
+     *
+     * @param messageId   消息 ID（用于媒体下载）
+     * @param messageType 消息类型
+     * @param contentStr  消息内容 JSON 字符串
+     * @param parts       输出的 content parts
+     * @return 纯文本摘要
+     */
+    @SuppressWarnings("unchecked")
+    private String extractContentParts(String messageId, String messageType, String contentStr,
+                                        List<MessageContentPart> parts) {
+        if (contentStr == null) return null;
+
+        try {
+            Map<String, Object> contentObj = objectMapper.readValue(contentStr, Map.class);
+
+            return switch (messageType) {
+                case "text" -> {
+                    String text = (String) contentObj.get("text");
+                    if (text != null && !text.isBlank()) {
+                        parts.add(MessageContentPart.text(text));
+                    }
+                    yield text;
+                }
+                case "post" -> {
+                    yield parsePostContent(messageId, contentObj, parts);
+                }
+                case "image" -> {
+                    String imageKey = (String) contentObj.get("image_key");
+                    if (imageKey != null) {
+                        String localPath = maybeDownloadResource(messageId, imageKey, "image", null);
+                        MessageContentPart part = MessageContentPart.image(imageKey, null);
+                        if (localPath != null) part.setPath(localPath);
+                        parts.add(part);
+                    }
+                    yield "[图片]";
+                }
+                case "file" -> {
+                    String fileKey = (String) contentObj.get("file_key");
+                    String fileName = (String) contentObj.get("file_name");
+                    if (fileKey != null) {
+                        String localPath = maybeDownloadResource(messageId, fileKey, "file", fileName);
+                        MessageContentPart part = MessageContentPart.file(fileKey, fileName, null);
+                        if (localPath != null) part.setPath(localPath);
+                        parts.add(part);
+                    }
+                    yield "[文件: " + (fileName != null ? fileName : "") + "]";
+                }
+                case "audio" -> {
+                    String fileKey = (String) contentObj.get("file_key");
+                    if (fileKey != null) {
+                        String localPath = maybeDownloadResource(messageId, fileKey, "file", null);
+                        MessageContentPart part = MessageContentPart.audio(fileKey, null);
+                        if (localPath != null) part.setPath(localPath);
+                        parts.add(part);
+                    }
+                    yield "[音频]";
+                }
+                case "media" -> {
+                    String fileKey = (String) contentObj.get("file_key");
+                    String fileName = (String) contentObj.get("file_name");
+                    if (fileKey != null) {
+                        String localPath = maybeDownloadResource(messageId, fileKey, "file", fileName);
+                        MessageContentPart part = MessageContentPart.video(fileKey, fileName);
+                        if (localPath != null) part.setPath(localPath);
+                        parts.add(part);
+                    }
+                    yield "[视频]";
+                }
+                default -> {
+                    parts.add(MessageContentPart.text("[" + messageType + " 消息]"));
+                    yield "[" + messageType + " 消息暂不支持处理]";
+                }
+            };
+        } catch (Exception e) {
+            log.warn("[feishu] Failed to parse message content: {}", e.getMessage());
+            parts.add(MessageContentPart.text(contentStr));
+            return contentStr;
+        }
+    }
+
+    // ==================== Post 富文本解析 ====================
+
+    /**
+     * 解析飞书 post 富文本消息
+     * <p>
+     * 飞书 post 结构：
+     * <pre>
+     * {
+     *   "zh_cn": {
+     *     "title": "标题",
+     *     "content": [                   ← 段落数组
+     *       [                            ← 每个段落是行内元素数组
+     *         {"tag": "text", "text": "内容"},
+     *         {"tag": "a", "text": "链接", "href": "url"},
+     *         {"tag": "at", "user_name": "名字", "user_id": "id"},
+     *         {"tag": "img", "image_key": "key"},
+     *         {"tag": "media", "file_key": "key"},
+     *         {"tag": "code_block", "text": "code"},
+     *         {"tag": "md", "text": "markdown"}
+     *       ]
+     *     ]
+     *   }
+     * }
+     * </pre>
+     */
+    @SuppressWarnings("unchecked")
+    private String parsePostContent(String messageId, Map<String, Object> contentObj,
+                                     List<MessageContentPart> parts) {
+        // 取 zh_cn 或第一个可用的 locale 分支
+        Map<String, Object> localeBranch = (Map<String, Object>) contentObj.get("zh_cn");
+        if (localeBranch == null) {
+            localeBranch = (Map<String, Object>) contentObj.get("en_us");
+        }
+        if (localeBranch == null && !contentObj.isEmpty()) {
+            // 取第一个 locale
+            for (Object val : contentObj.values()) {
+                if (val instanceof Map) {
+                    localeBranch = (Map<String, Object>) val;
+                    break;
+                }
+            }
+        }
+        if (localeBranch == null) {
+            return null;
+        }
+
+        StringBuilder text = new StringBuilder();
+
+        // 标题
+        String title = (String) localeBranch.get("title");
+        if (title != null && !title.isBlank()) {
+            text.append(title).append("\n");
+        }
+
+        // 段落内容
+        List<List<Map<String, Object>>> paragraphs =
+                (List<List<Map<String, Object>>>) localeBranch.get("content");
+        if (paragraphs == null) return text.toString().trim();
+
+        boolean mediaDownload = getConfigBoolean("media_download_enabled", false);
+
+        for (int i = 0; i < paragraphs.size(); i++) {
+            List<Map<String, Object>> paragraph = paragraphs.get(i);
+            if (paragraph == null) continue;
+
+            for (Map<String, Object> element : paragraph) {
+                String tag = (String) element.get("tag");
+                if (tag == null) continue;
+
+                switch (tag) {
+                    case "text" -> {
+                        String t = (String) element.get("text");
+                        if (t != null) text.append(t);
+                    }
+                    case "code_block", "md" -> {
+                        String t = (String) element.get("text");
+                        if (t != null) text.append(t);
+                    }
+                    case "a" -> {
+                        String linkText = (String) element.get("text");
+                        String href = (String) element.get("href");
+                        if (linkText != null && href != null) {
+                            text.append("[").append(linkText).append("](").append(href).append(")");
+                        } else if (linkText != null) {
+                            text.append(linkText);
+                        } else if (href != null) {
+                            text.append(href);
+                        }
+                    }
+                    case "at" -> {
+                        String userName = (String) element.get("user_name");
+                        String userId = (String) element.get("user_id");
+                        if (userName != null && !userName.isBlank()) {
+                            text.append("@").append(userName);
+                        } else if (userId != null) {
+                            text.append("@").append(userId);
+                        }
+                    }
+                    case "img" -> {
+                        String imageKey = (String) element.get("image_key");
+                        if (imageKey != null) {
+                            String localPath = mediaDownload ? maybeDownloadResource(messageId, imageKey, "image", null) : null;
+                            MessageContentPart imgPart = MessageContentPart.image(imageKey, null);
+                            if (localPath != null) imgPart.setPath(localPath);
+                            parts.add(imgPart);
+                            text.append("[图片]");
+                        }
+                    }
+                    case "media" -> {
+                        String fileKey = (String) element.get("file_key");
+                        if (fileKey != null) {
+                            String localPath = mediaDownload ? maybeDownloadResource(messageId, fileKey, "file", null) : null;
+                            MessageContentPart mediaPart = MessageContentPart.file(fileKey, null, null);
+                            if (localPath != null) mediaPart.setPath(localPath);
+                            parts.add(mediaPart);
+                            text.append("[媒体]");
+                        }
+                    }
+                    default -> {
+                        String t = (String) element.get("text");
+                        if (t != null) text.append(t);
+                    }
+                }
+            }
+
+            // 段落间用换行分隔
+            if (i < paragraphs.size() - 1) {
+                text.append("\n");
+            }
+        }
+
+        String result = text.toString().trim();
+        if (!result.isEmpty()) {
+            parts.add(0, MessageContentPart.text(result));
+        }
+        return result.isEmpty() ? null : result;
+    }
+
+    // ==================== 媒体文件下载 ====================
+
+    /**
+     * 如果 media_download_enabled 则下载资源，否则返回 null
+     */
+    private String maybeDownloadResource(String messageId, String fileKey, String type, String fileNameHint) {
+        if (!getConfigBoolean("media_download_enabled", false)) {
+            return null;
+        }
+        return downloadResource(messageId, fileKey, type, fileNameHint);
+    }
+
+    /**
+     * 下载飞书消息资源（图片/文件）到本地
+     *
+     * @param messageId    消息 ID
+     * @param fileKey      资源 key（image_key 或 file_key）
+     * @param type         资源类型："image" 或 "file"
+     * @param fileNameHint 文件名提示（可选）
+     * @return 本地文件路径，失败返回 null
+     */
+    private String downloadResource(String messageId, String fileKey, String type, String fileNameHint) {
+        try {
+            ensureTokenValid();
+            String apiBase = getApiBaseUrl();
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(apiBase + "/open-apis/im/v1/messages/" + messageId
+                            + "/resources/" + fileKey + "?type=" + type))
+                    .header("Authorization", "Bearer " + tenantAccessToken)
+                    .timeout(Duration.ofSeconds(30))
+                    .GET()
+                    .build();
+
+            HttpResponse<InputStream> response = httpClient.send(request,
+                    HttpResponse.BodyHandlers.ofInputStream());
+
+            if (response.statusCode() != 200) {
+                log.debug("[feishu] Download resource failed: status={}", response.statusCode());
+                return null;
+            }
+
+            // 构建目标目录
+            Path mediaDir = Path.of(System.getProperty("user.home"), ".mateclaw", "media", "feishu");
+            Files.createDirectories(mediaDir);
+
+            // 安全文件名
+            String safeKey = fileKey.replaceAll("[^a-zA-Z0-9_]", "");
+            if (safeKey.isEmpty()) safeKey = "file";
+
+            // 推断扩展名
+            String ext = "bin";
+            String contentType = response.headers().firstValue("Content-Type").orElse("");
+            if (contentType.contains("jpeg") || contentType.contains("jpg")) ext = "jpg";
+            else if (contentType.contains("png")) ext = "png";
+            else if (contentType.contains("gif")) ext = "gif";
+            else if (contentType.contains("webp")) ext = "webp";
+            else if (contentType.contains("pdf")) ext = "pdf";
+            else if (fileNameHint != null && fileNameHint.contains(".")) {
+                ext = fileNameHint.substring(fileNameHint.lastIndexOf('.') + 1);
+            }
+
+            Path filePath = mediaDir.resolve(messageId + "_" + safeKey + "." + ext);
+
+            try (InputStream is = response.body()) {
+                Files.copy(is, filePath, StandardCopyOption.REPLACE_EXISTING);
+            }
+
+            log.debug("[feishu] Downloaded resource to: {}", filePath);
+            return filePath.toAbsolutePath().toString();
+
+        } catch (Exception e) {
+            log.debug("[feishu] Download resource failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    // ==================== 消息发送 ====================
+
+    @Override
+    public void sendMessage(String targetId, String content) {
+        if (httpClient == null) {
+            log.warn("[feishu] Channel not started, cannot send message");
+            return;
+        }
+
+        ensureTokenValid();
+        String apiBase = getApiBaseUrl();
+
+        try {
+            String jsonBody = objectMapper.writeValueAsString(Map.of(
+                    "receive_id", targetId,
+                    "msg_type", "text",
+                    "content", objectMapper.writeValueAsString(Map.of("text", content))
+            ));
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(apiBase + "/open-apis/im/v1/messages?receive_id_type=chat_id"))
+                    .header("Content-Type", "application/json; charset=utf-8")
+                    .header("Authorization", "Bearer " + tenantAccessToken)
+                    .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() != 200) {
+                log.warn("[feishu] Send message failed: status={}, body={}", response.statusCode(), response.body());
+            } else {
+                log.debug("[feishu] Message sent to chat_id={}", targetId);
+            }
+
+        } catch (Exception e) {
+            log.error("[feishu] Failed to send message: {}", e.getMessage(), e);
+        }
+    }
+
+    @Override
+    public void sendContentParts(String targetId, List<MessageContentPart> parts) {
+        if (httpClient == null) {
+            log.warn("[feishu] Channel not started, cannot send message");
+            return;
+        }
+
+        ensureTokenValid();
+
+        for (MessageContentPart part : parts) {
+            if (part == null) continue;
+            try {
+                switch (part.getType()) {
+                    case "text" -> sendMessage(targetId, part.getText() != null ? part.getText() : "");
+                    case "image" -> {
+                        if (part.getMediaId() != null) {
+                            sendFeishuMedia(targetId, "image", Map.of("image_key", part.getMediaId()));
+                        }
+                    }
+                    case "file" -> {
+                        if (part.getMediaId() != null) {
+                            sendFeishuMedia(targetId, "file", Map.of("file_key", part.getMediaId()));
+                        }
+                    }
+                    default -> {
+                        if (part.getText() != null) sendMessage(targetId, part.getText());
+                    }
+                }
+            } catch (Exception e) {
+                log.error("[feishu] Failed to send content part ({}): {}", part.getType(), e.getMessage());
+            }
+        }
+    }
+
+    private void sendFeishuMedia(String chatId, String msgType, Map<String, Object> content) {
+        String apiBase = getApiBaseUrl();
+        try {
+            String jsonBody = objectMapper.writeValueAsString(Map.of(
+                    "receive_id", chatId,
+                    "msg_type", msgType,
+                    "content", objectMapper.writeValueAsString(content)
+            ));
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(apiBase + "/open-apis/im/v1/messages?receive_id_type=chat_id"))
+                    .header("Content-Type", "application/json; charset=utf-8")
+                    .header("Authorization", "Bearer " + tenantAccessToken)
+                    .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() != 200) {
+                log.warn("[feishu] Send {} failed: status={}, body={}", msgType, response.statusCode(), response.body());
+            }
+        } catch (Exception e) {
+            log.error("[feishu] Failed to send {}: {}", msgType, e.getMessage(), e);
+        }
+    }
+
+    // ==================== 主动推送 ====================
+
+    @Override
+    public boolean supportsProactiveSend() {
+        return true;
+    }
+
+    /**
+     * 主动推送消息
+     * <p>
+     * targetId 可以是：
+     * - chat_id（以 oc_ 开头）：发送到群聊
+     * - open_id（以 ou_ 开头）：发送到个人
+     * - 其他：默认按 chat_id 处理
+     */
+    @Override
+    public void proactiveSend(String targetId, String content) {
+        if (httpClient == null) {
+            log.warn("[feishu] Channel not started, cannot proactive send");
+            return;
+        }
+
+        ensureTokenValid();
+        String apiBase = getApiBaseUrl();
+
+        // 根据 targetId 前缀判断 receive_id_type
+        String receiveIdType;
+        if (targetId.startsWith("ou_")) {
+            receiveIdType = "open_id";
+        } else {
+            receiveIdType = "chat_id";
+        }
+
+        try {
+            String jsonBody = objectMapper.writeValueAsString(Map.of(
+                    "receive_id", targetId,
+                    "msg_type", "text",
+                    "content", objectMapper.writeValueAsString(Map.of("text", content))
+            ));
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(apiBase + "/open-apis/im/v1/messages?receive_id_type=" + receiveIdType))
+                    .header("Content-Type", "application/json; charset=utf-8")
+                    .header("Authorization", "Bearer " + tenantAccessToken)
+                    .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() != 200) {
+                log.warn("[feishu] Proactive send failed: status={}, body={}", response.statusCode(), response.body());
+            } else {
+                log.debug("[feishu] Proactive message sent to {} (type={})", targetId, receiveIdType);
+            }
+        } catch (Exception e) {
+            log.error("[feishu] Failed to proactive send: {}", e.getMessage(), e);
+        }
+    }
+
+    @Override
+    public String getChannelType() {
+        return CHANNEL_TYPE;
+    }
+}

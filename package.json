@@ -1,0 +1,32 @@
+{
+  "name": "mateclaw-desktop",
+  "version": "1.0.418",
+  "description": "MateClaw Desktop - Ozon-Claw Client",
+  "main": "dist-electron/main/index.js",
+  "author": "MateClaw",
+  "license": "MIT",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:ui\" \"npm run dev:electron\"",
+    "dev:ui": "cd mateclaw-ui && npm run dev",
+    "dev:electron": "wait-on http://localhost:5173 && electron .",
+    "build": "npm run build:ui && npm run build:electron",
+    "build:ui": "cd mateclaw-ui && npm run build",
+    "build:electron": "tsc -p electron/tsconfig.json",
+    "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:linux": "npm run build && electron-builder --linux"
+  },
+  "dependencies": {
+    "electron-updater": "^6.1.7"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "electron": "^28.1.0",
+    "typescript": "^5.3.3",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "extends": "./electron-builder.json"
+  }
+}
