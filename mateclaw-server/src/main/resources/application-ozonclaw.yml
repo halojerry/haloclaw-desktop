@@ -7,7 +7,7 @@ spring:
     url: jdbc:h2:file:./data/ozon-claw;MODE=MySQL;DATABASE_TO_LOWER=TRUE;CASE_INSENSITIVE_IDENTIFIERS=TRUE;AUTO_RECONNECT=TRUE
     driver-class-name: org.h2.Driver
     username: ozonclaw
-    password: ozonclaw123
+    password: ${DB_PASSWORD:}  # 必须通过环境变量设置
   # 关闭 Flyway（使用 Java 代码初始化数据库）
   flyway:
     enabled: false

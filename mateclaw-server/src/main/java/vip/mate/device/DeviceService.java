@@ -38,7 +38,7 @@ public class DeviceService {
     private int heartbeatTimeout;
 
     /** JWT密钥 */
-    @Value("${mateclaw.jwt.secret:MateClaw-Secret-Key-2024-Very-Long-String}")
+    @Value("${mateclaw.jwt.secret:}")  // 必须通过环境变量设置，无默认值
     private String jwtSecret;
 
     /**
