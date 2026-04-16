@@ -33,6 +33,10 @@ jobs:
           distribution: 'temurin'
           cache: maven
 
+      - name: Build plugin-api
+        working-directory: ./mateclaw-plugin-api
+        run: mvn clean install -DskipTests
+
       - name: Build backend JAR
         working-directory: ./mateclaw-server
         run: mvn clean package -DskipTests
