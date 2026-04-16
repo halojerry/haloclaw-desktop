@@ -33,7 +33,7 @@ public class AuthService {
     private final UserMapper userMapper;
     private final BCryptPasswordEncoder passwordEncoder;
 
-    @Value("${mateclaw.jwt.secret:MateClaw-Secret-Key-2024-Very-Long-String}")
+    @Value("${mateclaw.jwt.secret:}")  // 必须通过环境变量设置，无默认值
     private String jwtSecret;
 
     @Value("${mateclaw.jwt.expiration:86400000}")

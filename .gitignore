@@ -93,3 +93,16 @@ deploy/.env
 # Claude Code local settings
 .claude/settings.local.json
 .claude/plans/
+
+### 敏感信息文件 - 禁止提交 ###
+.env
+.env.local
+.env.production
+*.secret
+credentials.*
+SECRET.md
+secrets/
+.keystore/
+*.p12
+*.pem
+*.key
