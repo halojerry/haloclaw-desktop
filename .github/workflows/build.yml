@@ -20,7 +20,7 @@ jobs:
 
       - name: Install frontend dependencies
         working-directory: ./mateclaw-ui
-        run: npm ci
+        run: npm install
 
       - name: Build frontend
         working-directory: ./mateclaw-ui
@@ -44,85 +44,45 @@ jobs:
           mv portable/jdk-21.0.3+9-jre portable/jre
           rm jre.zip
 
-      - name: Create start.bat
+      - name: Create portable package
         run: |
           mkdir -p portable/config
           cp mateclaw-server/target/mateclaw-server-*.jar portable/mateclaw.jar
           
           VERSION=$(date +%Y.%m.%d.%H%M)
-          echo "{\"version\": \"$VERSION\", \"buildTime\": \"$(date -Iseconds)\"}" > portable/version.json
+          echo "{\"version\": \"$VERSION\"}" > portable/version.json
           
           printf '%s\n' \
             '@echo off' \
             'chcp 65001 >nul' \
             'cd /d "%~dp0"' \
-            '' \
-            'echo 正在检查更新...' \
+            'echo Checking for updates...' \
             'powershell -ExecutionPolicy Bypass -File "%~dp0update.ps1" 2>nul' \
-            '' \
             'if exist "update_temp\portable\mateclaw.jar" (' \
-            '    echo 正在应用更新...' \
             '    xcopy /Y /E "update_temp\portable\*" "."' \
             '    rmdir /S /Q "update_temp"' \
-            '    echo 更新完成！' \
             ')' \
-            '' \
             'if not exist "shortcut_created.flag" (' \
-            '    echo 正在创建桌面快捷方式...' \
             '    powershell -Command "$ws=New-Object -ComObject WScript.Shell;$s=$ws.CreateShortcut([IO.Path]::Combine($ws.SpecialFolders(\"Desktop\"),\"MateClaw.lnk\"));$s.TargetPath=\"%~dp0start.bat\";$s.Save()"' \
             '    echo. > "shortcut_created.flag"' \
             ')' \
-            '' \
-            'echo.' \
-            'echo MateClaw v'$VERSION' 启动中...' \
             'start "" "jre\bin\javaw.exe" -Xms256m -Xmx512m -jar mateclaw.jar' \
             'timeout /t 5 /nobreak >nul' \
             'start http://localhost:8080' \
             > portable/start.bat
-
-      - name: Create update.ps1
-        run: |
-          printf '%s\n' \
-            '$updateUrl = "https://api.github.com/repos/halojerry/mateclaw-releases/releases/latest"' \
-            '$current = (Get-Content version.json | ConvertFrom-Json).version' \
-            'try {' \
-            '    $release = Invoke-RestMethod -Uri $updateUrl -Headers @{User-Agent="MateClaw"} -TimeoutSec 10' \
-            '    $latest = $release.tag_name -replace "^v", ""' \
-            '    if ($latest -ne $current) {' \
-            '        Write-Host "发现新版本: v$latest"' \
-            '        $asset = $release.assets | Where-Object { $_.name -like "*-windows.zip" } | Select-Object -First 1' \
-            '        if ($asset) {' \
-            '            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "update.zip"' \
-            '            Expand-Archive update.zip -DestinationPath update_temp -Force' \
-            '            Remove-Item update.zip' \
-            '        }' \
-            '    }' \
-            '} catch {}' \
-            > portable/update.ps1
-
-      - name: Create additional files
-        run: |
-          printf '%s\n' \
-            '@echo off' \
-            'taskkill /F /IM javaw.exe 2>nul' \
-            'echo MateClaw 已停止' \
-            'pause' \
-            > portable/stop.bat
           
           printf '%s\n' \
-            'MateClaw AI Assistant' \
-            '' \
-            '使用方法:' \
-            '1. 双击 start.bat 启动' \
-            '2. 浏览器自动打开 http://localhost:8080' \
-            '' \
-            '首次运行会创建桌面快捷方式' \
-            '每次启动自动检查更新' \
-            > portable/README.txt
-
-      - name: Package
-        run: |
-          VERSION=$(cat portable/version.json | grep -o '"version": "[^"]*"' | cut -d'"' -f4)
+            '$r = Invoke-RestMethod "https://api.github.com/repos/halojerry/mateclaw-releases/releases/latest" -Headers @{User-Agent="M"}' \
+            '$c = (Get-Content version.json | ConvertFrom-Json).version' \
+            '$l = $r.tag_name -replace "^v",""' \
+            'if($l -ne $c){' \
+            '  $a = $r.assets | ?{$_.name -like "*-windows.zip"} | select -First 1' \
+            '  if($a){Invoke-WebRequest $a.browser_download_url -OutFile update.zip; Expand-Archive update.zip -Dest update_temp -Force; rm update.zip}' \
+            '}' \
+            > portable/update.ps1
+          
+          printf '%s\n' '@echo off' 'taskkill /F /IM javaw.exe 2>nul' 'pause' > portable/stop.bat
+          
           zip -r MateClaw-Portable-$VERSION-windows.zip portable
 
       - name: Upload artifact
@@ -149,15 +109,10 @@ jobs:
           files: packages/MateClaw-Portable-*.zip
           body: |
             ## MateClaw Portable (Windows)
-            
-            ### 使用方法
-            1. 下载并解压 zip
-            2. 双击 start.bat 启动
-            3. 浏览器自动打开 http://localhost:8080
-            
-            ### 特性
+            1. 解压后双击 start.bat
+            2. 浏览器自动打开 http://localhost:8080
             - 内置 JRE 21
-            - 自动创建桌面快捷方式
+            - 首次运行创建桌面快捷方式
             - 启动时自动检查更新
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
