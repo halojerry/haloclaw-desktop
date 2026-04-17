@@ -57,17 +57,17 @@ export default class MenuBuilder {
 
   buildDarwinTemplate(): MenuItemConstructorOptions[] {
     const subMenuAbout: DarwinMenuItemConstructorOptions = {
-      label: 'UI-TARS Desktop',
+      label: 'HaloClaw',
       submenu: [
         {
-          label: 'About UI-TARS Desktop',
+          label: 'About HaloClaw',
           selector: 'orderFrontStandardAboutPanel:',
         },
         { type: 'separator' },
         { label: 'Services', submenu: [] },
         { type: 'separator' },
         {
-          label: 'Hide UI-TARS Desktop',
+          label: 'Hide HaloClaw',
           accelerator: 'Command+H',
           selector: 'hide:',
         },

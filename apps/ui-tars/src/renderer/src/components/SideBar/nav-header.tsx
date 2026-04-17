@@ -25,8 +25,8 @@ export function UITarsHeader({ showTrigger }: HeaderProps) {
           <img src={logoVector} alt="" />
         </div>
         <div className="grid flex-1 text-left text-sm leading-tight">
-          <span className="truncate font-semibold">UI-TARS</span>
-          <span className="truncate text-xs pb-[1px]">Playground</span>
+          <span className="truncate font-semibold">HaloClaw</span>
+          <span className="truncate text-xs pb-[1px]">Ozon电商助手</span>
         </div>
       </SidebarMenuButton>
       {showTrigger && (

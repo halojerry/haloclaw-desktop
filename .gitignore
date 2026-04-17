@@ -13,3 +13,7 @@ scripts/merge-yml/*.yml
 .claude/
 .tarko
 .mcp*_token
+
+# 环境变量
+.env
+apps/ui-tars/.env
