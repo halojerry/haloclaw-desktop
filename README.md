@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/halojerry-haloclaw-desktop-badge.png)](https://mseep.ai/app/halojerry-haloclaw-desktop)
+
 <picture>
   <img alt="Agent TARS Banner" src="./images/tars.png">
 </picture>
